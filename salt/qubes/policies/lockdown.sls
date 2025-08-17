@@ -48,15 +48,6 @@
         qubes.ClipboardCopy    *  *  ask
         qubes.ClipboardPaste   *  *  ask
         
-        # Only sys-net can access networking hardware
-        qubes.DeviceNetwork    *        sys-net           allow
-        qubes.DeviceNetwork    *        @anyvm            deny  notify=yes
-
-        # Block mic/cam except specific domains
-        qubes.DeviceMic        *        @tag:work-allowed allow
-        qubes.DeviceMic        *        @anyvm            deny  notify=yes
-        qubes.DeviceCamera     *        @tag:work-allowed allow
-        qubes.DeviceCamera     *        @anyvm            deny  notify=yes
 
 # Tagging
 tag-trusted:

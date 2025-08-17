@@ -26,3 +26,24 @@ push-dns-forward-filter:
         qvm-run -u root sys-firewall 'chmod +x /rw/config/qubes-firewall-user-script'
         # Apply immediately this run
         qvm-run -u root sys-firewall '/rw/config/qubes-firewall-user-script'
+
+# Drops TCP/UDP 853 (DNS-over-TLS) in FORWARD on sys-firewall
+sys-firewall-block-dot:
+  qvm.run:
+    - name: sys-firewall
+    - user: root
+    - cmd: |
+        set -e
+        nft list table inet qubes >/dev/null 2>&1 || nft add table inet qubes
+        # Create a forward chain (if not exists) with policy accept so Qubes rules stand,
+        # then add our specific DoT drops at a later priority.
+        nft list chain inet qubes fwd_dot >/dev/null 2>&1 || \
+          nft add chain inet qubes fwd_dot { type filter hook forward priority 90; policy accept; }
+        # Add rules idempotently
+        nft list chain inet qubes fwd_dot | grep -q 'udp dport 853 drop' || nft add rule inet qubes fwd_dot udp dport 853 drop
+        nft list chain inet qubes fwd_dot | grep -q 'tcp dport 853 drop' || nft add rule inet qubes fwd_dot tcp dport 853 drop
+
+set-updatevm-sys-firewall:
+  cmd.run:
+    - name: qubes-prefs updatevm sys-firewall
+    - unless: qubes-prefs get updatevm | grep -q sys-firewall
