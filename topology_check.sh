@@ -106,6 +106,145 @@ else
   warn "sys-usb missing — USB lockdown not enforced"
 fi
 
+# ---------- Whonix: VPN ⇒ Tor gateway ----------
+echo "=== Whonix VPN⇒Tor chain ==="
+if has_vm sys-vpn-tor; then
+  assert_eq "$(tmpl sys-vpn-tor)" "whonix-gateway-17" "sys-vpn-tor template"
+  U="$(pref sys-vpn-tor netvm)"
+  [[ "$U" == "sys-vpn-ru" || "$U" == "sys-vpn-nl" ]] && ok "sys-vpn-tor upstream NetVM = $U" || die "sys-vpn-tor NetVM must be sys-vpn-ru or sys-vpn-nl"
+  assert_yes "$(pref sys-vpn-tor provides_network)" "sys-vpn-tor provides_network"
+
+  # DNAT exclusion in sys-firewall (do not hijack Whonix DNS)
+  SYS_VPN_TOR_IP="$(vm_ip sys-vpn-tor)"; [[ -n "$SYS_VPN_TOR_IP" ]] || die "Cannot get sys-vpn-tor IP"
+  qvm-run -q -u root --pass-io sys-firewall \
+    "nft list table ip nat | sed -n '/prerouting/,/}/p' | grep -E 'ip saddr ${SYS_VPN_TOR_IP}.*dport 53.*accept'" >/dev/null \
+    && ok "sys-firewall NAT excludes DNS from sys-vpn-tor ($SYS_VPN_TOR_IP)" \
+    || warn "Whonix DNS exclusion not found in NAT (ensure exclusion state applied)"
+else
+  warn "sys-vpn-tor not present (skip Whonix VPN⇒Tor checks)"
+fi
+
+# ---------- Whonix Workstations bound to sys-vpn-tor ----------
+echo "=== Whonix WS over VPN⇒Tor ==="
+for W in ws-tor-research ws-tor-forums; do
+  if has_vm "$W"; then
+    assert_eq "$(tmpl "$W")" "whonix-workstation-17" "$W template"
+    assert_eq "$(pref "$W" netvm)" "sys-vpn-tor" "$W netvm"
+  else
+    warn "$W missing"
+  fi
+done
+
+# ---------- Policies for Whonix pairings (soft guard) ----------
+if [[ -f /etc/qubes/policy.d/50-whonix-vpn-tor.policy ]]; then
+  ok "whonix-vpn-tor policy present"
+else
+  warn "50-whonix-vpn-tor.policy missing (optional soft guard)"
+fi
+
+# ---------- Split-GPG / Split-SSH ----------
+echo "=== Split-GPG / Split-SSH ==="
+# Vaults exist & networkless
+for v in vault-secrets vault-dn-secrets; do
+  has_vm "$v" || die "Missing vault: $v"
+  assert_eq "$(pref "$v" netvm)" "none" "$v netvm"
+done
+
+# Client packages in templates
+for t in deb_harden whonix-workstation-17; do
+  qvm-run -q -u root --pass-io "$t" "dpkg -l | egrep -q 'qubes-gpg-client|qubes-app-linux-split-ssh'" \
+    && ok "Split clients installed in $t" \
+    || warn "Split clients missing in $t"
+done
+
+# Server bits in vaults
+for v in vault-secrets vault-dn-secrets; do
+  qvm-run -q -u root --pass-io "$v" "dpkg -l | egrep -q 'qubes-gpg-split|qubes-app-linux-split-ssh|gnupg'" \
+    && ok "Split servers installed in $v" \
+    || warn "Split servers missing in $v"
+done
+
+# Policies present
+for p in /etc/qubes/policy.d/30-split-gpg.policy /etc/qubes/policy.d/30-split-ssh.policy; do
+  [[ -f "$p" ]] && ok "Policy present: $p" || warn "Missing policy: $p"
+done
+
+# Tags applied to callers
+for vm in work dev personal; do tagged "$vm" split-gpg-deb && tagged "$vm" split-ssh-deb \
+  && ok "Tags OK on $vm (split-gpg-deb/split-ssh-deb)" \
+  || warn "Missing split-gpg/ssh tags on $vm"; done
+for vm in ws-tor-research ws-tor-forums; do tagged "$vm" split-gpg-ws && tagged "$vm" split-ssh-ws \
+  && ok "Tags OK on $vm (split-gpg-ws/split-ssh-ws)" \
+  || warn "Missing split-gpg/ssh tags on $vm"; done
+
+# ---------- qube-pass integration ----------
+echo "=== qube-pass ==="
+# RPCs in vaults
+for v in vault-secrets vault-dn-secrets; do
+  qvm-run -q -u root --pass-io "$v" "[ -x /etc/qubes-rpc/my.pass.Lookup ]" \
+    && ok "my.pass.Lookup installed in $v" \
+    || warn "my.pass.Lookup missing in $v"
+done
+# Client wrappers in templates
+for t in deb_harden whonix-workstation-17; do
+  qvm-run -q -u root --pass-io "$t" "command -v qpass >/dev/null" \
+    && ok "qpass present in $t" || warn "qpass missing in $t"
+  qvm-run -q -u root --pass-io "$t" "command -v qpass-ws >/dev/null" \
+    && ok "qpass-ws present in $t" || warn "qpass-ws missing in $t"
+done
+# Policy file
+[[ -f /etc/qubes/policy.d/30-pass.policy ]] && ok "pass policy present" || warn "30-pass.policy missing"
+# Tags for pass routing
+for vm in work dev personal; do tagged "$vm" split-pass-deb && ok "pass tag ok on $vm" || warn "pass tag missing on $vm"; done
+for vm in ws-tor-research ws-tor-forums; do tagged "$vm" split-pass-ws && ok "pass tag ok on $vm" || warn "pass tag missing on $vm"; done
+
+# ---------- AppArmor enforcement for browsers ----------
+echo "=== AppArmor (Firefox/Chromium) in templates ==="
+for t in deb_harden whonix-workstation-17; do
+  if qvm-run -q -u root --pass-io "$t" "aa-status 2>/dev/null | egrep -q '(firefox|chromium).*enforce'"; then
+    ok "AppArmor enforced for browsers in $t"
+  else
+    warn "AppArmor not enforced for browsers in $t (profiles or aa-enforce missing)"
+  fi
+done
+
+
+# Vault VMs exist + are networkless?
+for v in vault-secrets vault-dn-secrets; do
+  qvm-ls --raw-list | grep -qx $v || echo "MISSING VM: $v"
+  nv=$(qvm-prefs $v netvm 2>/dev/null); [ "$nv" = "none" ] && echo "OK: $v netvm=none" || echo "FIX: $v netvm=$nv (should be none)"
+done
+
+# Client templates have Split-GPG/SSH bits?
+for t in deb_harden whonix-workstation-17; do
+  qvm-run -q -u root --pass-io $t "dpkg -l | egrep -q 'qubes-gpg-client|qubes-app-linux-split-ssh' && echo OK:$t clients" || echo "FIX: install split clients in $t"
+done
+
+# Vaults have server bits?
+for v in vault-secrets vault-dn-secrets; do
+  qvm-run -q -u root --pass-io $v "dpkg -l | egrep -q 'qubes-gpg-split|qubes-app-linux-split-ssh|gnupg' && echo OK:$v servers" || echo "FIX: install split servers in $v"
+done
+
+# qube-pass RPCs installed in vaults?
+for v in vault-secrets vault-dn-secrets; do
+  qvm-run -q -u root --pass-io $v "[ -x /etc/qubes-rpc/my.pass.Lookup ] && echo OK:$v pass.Lookup" || echo "FIX: my.pass.Lookup missing in $v"
+done
+
+# Policies present?
+for p in /etc/qubes/policy.d/30-split-gpg.policy /etc/qubes/policy.d/30-split-ssh.policy /etc/qubes/policy.d/30-pass.policy; do
+  [ -f $p ] && echo "OK: policy $p" || echo "FIX: missing $p"
+done
+
+# Tags present on callers?
+for vm in work dev personal; do qvm-tags $vm | grep -q split-gpg-deb || echo "FIX: tag $vm with split-gpg-deb/split-ssh-deb"; done
+for vm in ws-tor-research ws-tor-forums; do qvm-tags $vm | grep -q split-gpg-ws  || echo "FIX: tag $vm with split-gpg-ws/split-ssh-ws"; done
+
+# AppArmor enforced for browsers in templates?
+for t in deb_harden whonix-workstation-17; do
+  qvm-run -q -u root --pass-io $t "aa-status 2>/dev/null | egrep -q '(firefox|chromium).*enforce' && echo OK:AppArmor:$t" || echo "WARN: AppArmor not enforced for browsers in $t"
+done
+
+
 echo "=== dom0 prefs ==="
 UV="$(qubes-prefs updatevm || true)"
 [[ "$UV" == "sys-firewall" ]] && ok "updatevm = sys-firewall" || warn "updatevm is '$UV' (recommend sys-firewall)"

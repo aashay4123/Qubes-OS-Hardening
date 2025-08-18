@@ -33,6 +33,18 @@ sys-dns-configure:
         EOF
         systemctl restart NetworkManager || true
 
+
+        # Randomize MAC addresses
+        cat >/etc/NetworkManager/conf.d/00-macrandomize.conf <<'EOF'
+        [connection]
+        wifi.mac-address-randomization=1
+        ethernet.cloned-mac-address=random
+        wifi.cloned-mac-address=random
+        [device]
+        wifi.scan-rand-mac-address=yes
+        EOF
+        systemctl restart NetworkManager || true
+
         # Pin to local stub
         systemctl disable --now systemd-resolved || true
         rm -f /etc/resolv.conf
@@ -57,5 +69,19 @@ sys-dns-configure:
         if ! grep -q 'include "/etc/nftables.d/\*\.nft"' /etc/nftables.conf 2>/dev/null; then
           echo 'include "/etc/nftables.d/*.nft"' > /etc/nftables.conf
         fi
+        systemctl enable nftables
+        systemctl restart nftables
+
+
+        # Global DNS egress lock (only allow DNS to sys-dns)
+
+        cat >/etc/nftables.conf <<'EOF'
+        table inet filter {
+          chain input { type filter hook input priority 0; policy drop;
+            ct state {established,related} accept; iif lo accept; ip protocol icmp accept; }
+          chain forward { type filter hook forward priority 0; policy drop; }
+          chain output  { type filter hook output priority 0; policy accept; }
+        }
+        EOF
         systemctl enable nftables
         systemctl restart nftables

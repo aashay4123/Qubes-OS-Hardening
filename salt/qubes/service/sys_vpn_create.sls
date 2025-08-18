@@ -11,7 +11,7 @@
 
 {{ vm }}-tag:
   qvm.tag:
-    - name: @tag:vpn-vm
+    - name: @tag:vpn-tor-vm
     - vm: [ {{ vm }} ]
 
 {{ vm }}-finalize:
@@ -29,3 +29,16 @@
         systemctl enable --now dnscrypt-proxy || true
 
 {% endfor %}
+
+
+
+# Create sys-vpn-tor if missing
+sys-vpn-tor-create:
+  cmd.run:
+    - name: |
+        set -e
+        if ! qvm-ls --raw-list | grep -qx sys-vpn-tor; then
+          qvm-create --class AppVM --template whonix-gateway-17 --label blue sys-vpn-tor
+          qvm-prefs sys-vpn-tor provides_network True
+          qvm-prefs sys-vpn-tor netvm sys-vpn-ru
+        fi

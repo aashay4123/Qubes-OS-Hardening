@@ -42,6 +42,32 @@
         qubes.ClipboardPaste   @tag:tor        *              deny notify=yes
         qubes.ClipboardPaste   @tag:tor        @tag:tor       ask
 
+
+        # Deny clipboard/filecopy across personas; allow within same-tag domain
+        # Persona tags: persona-work, persona-dev, persona-personal, persona-research, persona-forums
+
+        qubes.ClipboardPaste  @tag:persona-work     @tag:persona-work     allow
+        qubes.ClipboardPaste  @tag:persona-work     @anyvm                 deny notify=yes
+        qubes.ClipboardPaste  @tag:persona-dev      @tag:persona-dev      allow
+        qubes.ClipboardPaste  @tag:persona-dev      @anyvm                 deny notify=yes
+        qubes.ClipboardPaste  @tag:persona-personal @tag:persona-personal allow
+        qubes.ClipboardPaste  @tag:persona-personal @anyvm                 deny notify=yes
+        qubes.ClipboardPaste  @tag:persona-research @tag:persona-research allow
+        qubes.ClipboardPaste  @tag:persona-research @anyvm                 deny notify=yes
+        qubes.ClipboardPaste  @tag:persona-forums   @tag:persona-forums   allow
+        qubes.ClipboardPaste  @tag:persona-forums   @anyvm                 deny notify=yes
+
+        qubes.Filecopy        @tag:persona-work     @tag:persona-work     ask
+        qubes.Filecopy        @tag:persona-work     @anyvm                 deny notify=yes
+        qubes.Filecopy        @tag:persona-dev      @tag:persona-dev      ask
+        qubes.Filecopy        @tag:persona-dev      @anyvm                 deny notify=yes
+        qubes.Filecopy        @tag:persona-personal @tag:persona-personal ask
+        qubes.Filecopy        @tag:persona-personal @anyvm                 deny notify=yes
+        qubes.Filecopy        @tag:persona-research @tag:persona-research ask
+        qubes.Filecopy        @tag:persona-research @anyvm                 deny notify=yes
+        qubes.Filecopy        @tag:persona-forums   @tag:persona-forums   ask
+        qubes.Filecopy        @tag:persona-forums   @anyvm                 deny notify=yes
+
         # --- Fallbacks
         qubes.Filecopy         *  *  ask
         qubes.OpenURL          *  *  ask

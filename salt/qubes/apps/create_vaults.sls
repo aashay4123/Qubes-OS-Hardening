@@ -2,7 +2,6 @@
 # - vault-secrets (Debian)
 # - vault-dn-secrets (Whonix-WS)
 
-# Ensure templates exist
 ensure-deb-harden:
   cmd.run:
     - name: qvm-ls --raw-list | grep -qx deb_harden || qvm-template install debian-12
@@ -11,30 +10,28 @@ ensure-whonix-ws:
   cmd.run:
     - name: qvm-ls --raw-list | grep -qx whonix-workstation-17 || qvm-template install whonix-workstation-17
 
-# Create vault-secrets (Debian)
-vault-secrets-create:
+
+# Server-side: set up pass + qrexec in both vaults.
+
+{% for vlt in ['vault-secrets','vault-dn-secrets'] %}
+
+{{ vlt }}-secrets-create:
   cmd.run:
     - name: |
         set -e
-        if ! qvm-ls --raw-list | grep -qx vault-secrets; then
-          qvm-create --class AppVM --template deb_harden --label black vault-secrets
-          qvm-prefs vault-secrets netvm none
+        if ! qvm-ls --raw-list | grep -qx {{ vlt }}; then
+          qvm-create --class AppVM --template whonix-workstation-17 --label black {{ vlt }}
+          qvm-prefs {{ vlt }} netvm none
         fi
 
-# Create vault-dn-secrets (Whonix WS)
-vault-dn-secrets-create:
+{{ vlt }}-tag:
   cmd.run:
     - name: |
-        set -e
-        if ! qvm-ls --raw-list | grep -qx vault-dn-secrets; then
-          qvm-create --class AppVM --template whonix-workstation-17 --label black vault-dn-secrets
-          qvm-prefs vault-dn-secrets netvm none
-        fi
+        qvm-tags {{ vlt }} add secrets-vault || true
 
-# Harden & install server packages in vault-secrets
-vault-secrets-init:
+{{ vlt }}-secrets-init:
   qvm.run:
-    - name: vault-secrets
+    - name: {{ vlt }}
     - user: root
     - cmd: |
         set -e
@@ -47,32 +44,6 @@ vault-secrets-init:
         # Optional: restrict SSH known_hosts/keys dir
         install -d -m 700 -o user -g user /home/user/.ssh
 
-# Harden & install server packages in vault-dn-secrets
-vault-dn-secrets-init:
-  qvm.run:
-    - name: vault-dn-secrets
-    - user: root
-    - cmd: |
-        set -e
-        apt-get update -y || true
-        apt-get install -y --no-install-recommends \
-          gnupg gpg-agent qubes-gpg-split qubes-app-linux-split-ssh openssh-client
-        install -d -m 700 -o user -g user /home/user/.gnupg
-        chown -R user:user /home/user/.gnupg
-        install -d -m 700 -o user -g user /home/user/.ssh
-
-# Tag vaults for clarity (not used by policy, but useful)
-vault-tags:
-  cmd.run:
-    - name: |
-        qvm-tags vault-secrets add secrets-vault || true
-        qvm-tags vault-dn-secrets add secrets-vault || true
-
-
-
-# Server-side: set up pass + qrexec in both vaults.
-
-{% for vlt in ['vault-secrets','vault-dn-secrets'] %}
 {{ vlt }}-pass-install:
   qvm.run:
     - name: {{ vlt }}
