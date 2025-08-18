@@ -8,16 +8,16 @@
         ########################
 
         # --- Maintenance override: if either side is tagged 'maint', allow
-        qubes.*   *         @tag:maint      allow
-        qubes.*   @tag:maint   *            allow
+        qubes.*  +allow-all-names        @tag:maint      allow
+        qubes.*   @tag:maint  +allow-all-names           allow
 
         # --- Hard denials
-        qubes.VMShell * * deny notify=yes
+        qubes.VMShell+allow-all-names* deny notify=yes
 
         # --- Vault: deny inbound; allow outbound on ask
-        qubes.ClipboardPaste   vault     *        deny notify=yes
-        qubes.Filecopy         vault     *        deny notify=yes
-        qubes.ClipboardCopy    *         @tag:vault   allow
+        qubes.ClipboardPaste   vault    +allow-all-names       deny notify=yes
+        qubes.Filecopy         vault    +allow-all-names       deny notify=yes
+        qubes.ClipboardCopy   +allow-all-names        @tag:vault   allow
         qubes.Filecopy         @default  @tag:vault   ask
 
         # --- Trust groups (add tags via Salt or CLI)
@@ -34,13 +34,13 @@
         qubes.OpenURL          @tag:trusted   @tag:trusted    ask
 
         # --- Force offline DVM for "Open in DisposableVM"
-        qubes.OpenInDisposableVM  *  *  allow target=@dispvm:dvm-offline default_target=@dispvm:dvm-offline
+        qubes.OpenInDisposableVM  +allow-all-names  +allow-all-names  allow target=@dispvm:dvm-offline default_target=@dispvm:dvm-offline
 
         # --- Keep tor profiles self-contained
-        qubes.Filecopy         @tag:tor        *              deny notify=yes
-        qubes.Filecopy         @tag:tor        @tag:tor       ask
-        qubes.ClipboardPaste   @tag:tor        *              deny notify=yes
-        qubes.ClipboardPaste   @tag:tor        @tag:tor       ask
+        qubes.Filecopy         @tag:tor        +allow-all-names     deny notify=yes
+        qubes.Filecopy         @tag:tor        @tag:tor             ask
+        qubes.ClipboardPaste   @tag:tor        +allow-all-names     deny notify=yes
+        qubes.ClipboardPaste   @tag:tor        @tag:tor             ask
 
 
         # Deny clipboard/filecopy across personas; allow within same-tag domain
@@ -69,11 +69,15 @@
         qubes.Filecopy        @tag:persona-forums   @anyvm                 deny notify=yes
 
         # --- Fallbacks
-        qubes.Filecopy         *  *  ask
-        qubes.OpenURL          *  *  ask
-        qubes.ClipboardCopy    *  *  ask
-        qubes.ClipboardPaste   *  *  ask
-        
+        qubes.Filecopy         +allow-all-names  +allow-all-names  ask
+        qubes.OpenURL          +allow-all-names  +allow-all-names  ask
+        qubes.ClipboardCopy    +allow-all-names  +allow-all-names  ask
+        qubes.ClipboardPaste   +allow-all-names  +allow-all-names  ask
+
+        qubes.Filecopy    +allow-all-names    @anyvm    @anyvm    deny notify=yes
+        qubes.ClipboardPaste  +allow-all-names    @anyvm    @anyvm    deny notify=yes
+        qubes.OpenURL    +allow-all-names    @anyvm    @anyvm    deny notify=yes
+        qubes.VMShell    +allow-all-names    @anyvm    @anyvm    deny notify=yes
 
 # Tagging
 tag-trusted:

@@ -9,6 +9,6 @@ tag-dns-resolver:
   file.managed:
     - mode: '0644'
     - contents: |
-        qubes.Dns  *  @tag:dns-resolver  allow
-        qubes.Dns  *  @anyvm             deny  notify=yes
+        qubes.Dns +allow-all-names @tag:dns-resolver  allow
+        qubes.Dns +allow-all-names @anyvm             deny  notify=yes
 

@@ -8,6 +8,44 @@ whonix-ws-split-clients:
         apt-get update -y || true
         apt-get install -y --no-install-recommends \
           qubes-gpg-client qubes-app-linux-split-ssh
+        sudo tee /etc/systemd/system/my-after-sdwdate.service <<'EOF'
+        [Unit]
+        Description=Start my apps only after sdwdate
+        After=sdwdate.service tor@default.service network-online.target
+        Wants=sdwdate.service
+
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/start-my-stack.sh
+
+        [Install]
+        WantedBy=multi-user.target
+        EOF
+        sudo systemctl enable my-after-sdwdate.service
+
+
+whonix-gw-time-leak-discipline:
+  qvm.run:
+    - name: whonix-gateway-17
+    - user: root
+    - cmd: |
+        set -e
+        apt-get update -y || true
+        sudo tee /etc/systemd/system/my-after-sdwdate.service <<'EOF'
+        [Unit]
+        Description=Start my apps only after sdwdate
+        After=sdwdate.service tor@default.service network-online.target
+        Wants=sdwdate.service
+
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/start-my-stack.sh
+
+        [Install]
+        WantedBy=multi-user.target
+        EOF
+        sudo systemctl enable my-after-sdwdate.service
+
 
 
 # Whonix WS callers

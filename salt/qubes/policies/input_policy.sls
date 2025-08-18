@@ -14,20 +14,20 @@
     - contents: |
         # Allow only sys-usb to proxy input into dom0; deny everyone else.
         qubes.InputKeyboard  sys-usb  dom0  allow
-        qubes.InputKeyboard  *       dom0  deny  notify=yes
+        qubes.InputKeyboard +allow-all-names      dom0  deny  notify=yes
 
         qubes.InputMouse     sys-usb  dom0  allow
-        qubes.InputMouse     *       dom0  deny  notify=yes
+        qubes.InputMouse    +allow-all-names      dom0  deny  notify=yes
 
         # Only sys-net can access networking hardware
-        qubes.DeviceNetwork    *        sys-net           allow
-        qubes.DeviceNetwork    *        @anyvm            deny  notify=yes
+        qubes.DeviceNetwork   +allow-all-names       sys-net           allow
+        qubes.DeviceNetwork   +allow-all-names       @anyvm            deny  notify=yes
 
         # Block mic/cam except specific domains
-        qubes.DeviceMic        *        @tag:work-allowed allow
-        qubes.DeviceMic        *        @anyvm            deny  notify=yes
-        qubes.DeviceCamera     *        @tag:work-allowed allow
-        qubes.DeviceCamera     *        @anyvm            deny  notify=yes
+        qubes.DeviceMic       +allow-all-names       @tag:work-allowed allow
+        qubes.DeviceMic       +allow-all-names       @anyvm            deny  notify=yes
+        qubes.DeviceCamera    +allow-all-names       @tag:work-allowed allow
+        qubes.DeviceCamera    +allow-all-names       @anyvm            deny  notify=yes
 
 # Device policies
 /etc/qubes/policy.d/30-devices.policy:

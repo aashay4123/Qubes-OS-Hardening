@@ -27,12 +27,12 @@ tag-{{ vm }}-split-gpg-ssh:
         # Whonix callers → vault-dn-secrets
         qubes.Gpg  @tag:split-gpg-ws    vault-dn-secrets allow
         # Everything else denied
-        qubes.Gpg  *                    *                deny  notify=yes
+        qubes.Gpg +allow-all-names                  +allow-all-names               deny  notify=yes
 
         # Optional: allow controlled key import into the right vault (from dom0 or a mgmt VM only)
         qubes.GpgImportKey  @tag:split-gpg-deb   vault-secrets    ask
         qubes.GpgImportKey  @tag:split-gpg-ws    vault-dn-secrets ask
-        qubes.GpgImportKey  *                    *                deny  notify=yes
+        qubes.GpgImportKey +allow-all-names                  +allow-all-names               deny  notify=yes
 
 # /etc/qubes/policy.d/30-split-ssh.policy
 /etc/qubes/policy.d/30-split-ssh.policy:
@@ -44,4 +44,4 @@ tag-{{ vm }}-split-gpg-ssh:
         # Whonix callers → vault-dn-secrets
         qubes.SshAgent  @tag:split-ssh-ws    vault-dn-secrets allow
         # Everything else denied
-        qubes.SshAgent  *                    *                deny  notify=yes
+        qubes.SshAgent +allow-all-names                  +allow-all-names               deny  notify=yes

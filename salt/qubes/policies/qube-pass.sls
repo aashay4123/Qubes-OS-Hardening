@@ -21,9 +21,9 @@ tag-{{ vm }}-pass:
         # Read-only lookup:
         my.pass.Lookup   @tag:split-pass-deb   vault-secrets      allow
         my.pass.Lookup   @tag:split-pass-ws    vault-dn-secrets   allow
-        my.pass.Lookup   *                     *                  deny  notify=yes
+        my.pass.Lookup  +allow-all-names                   +allow-all-names                 deny  notify=yes
 
         # (Optional) listing is often sensitive: you can enable per-group if needed
         my.pass.List     @tag:split-pass-deb   vault-secrets      ask
         my.pass.List     @tag:split-pass-ws    vault-dn-secrets   ask
-        my.pass.List     *                     *                  deny  notify=yes
+        my.pass.List    +allow-all-names                   +allow-all-names                 deny  notify=yes
