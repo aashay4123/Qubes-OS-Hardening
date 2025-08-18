@@ -84,3 +84,33 @@ deb_harden-hardening:
         systemctl disable --now ssh || true
         apt-get -y purge telnetd xinetd rsh-server rlogin openssh-server || true
         apt-get -y autoremove --purge
+
+
+# Debian caller template
+deb-harden-split-clients:
+  qvm.run:
+    - name: deb_harden
+    - user: root
+    - cmd: |
+        set -e
+        apt-get update -y || true
+        apt-get install -y --no-install-recommends \
+          qubes-gpg-client qubes-app-linux-split-ssh
+
+# Debian callers
+deb-harden-client-env:
+  qvm.run:
+    - name: deb_harden
+    - user: root
+    - cmd: |
+        set -e
+        cat >/etc/profile.d/20-split-gpg.sh <<'EOF'
+        export GPG_TTY=$(tty 2>/dev/null || echo)
+        alias gpg='qubes-gpg-client-wrapper'
+        EOF
+        cat >/etc/profile.d/20-split-ssh.sh <<'EOF'
+        # Start proxy if present; otherwise user can run: systemctl --user start qubes-ssh-agent-proxy
+        if systemctl --user list-unit-files 2>/dev/null | grep -q qubes-ssh-agent-proxy; then
+          systemctl --user enable --now qubes-ssh-agent-proxy.socket qubes-ssh-agent-proxy.service 2>/dev/null || true
+        fi
+        EOF

@@ -19,7 +19,9 @@
     - name: {{ vm }}
     - user: root
     - cmd: |
-        set -e
+        set -e 
+        apt-get update -y && apt-get dist-upgrade -y
+
         # Ensure resolv.conf and services are correct in the VM
         systemctl disable --now systemd-resolved || true
         rm -f /etc/resolv.conf; echo "nameserver 127.0.0.1" > /etc/resolv.conf

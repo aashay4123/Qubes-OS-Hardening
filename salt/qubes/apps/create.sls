@@ -27,7 +27,7 @@ hack:
 
 {% set tmpl = 'deb_harden_min' %}
 {% set default_netvm = 'sys-firewall' %}
-{% for vm in ['vault-secrets','vault-storage'] %}
+{% for vm in ['vault-secrets','vault-dn-secrets','vault-storage'] %}
 
 {{ vm }}-create:
   qvm.vm:
@@ -38,28 +38,22 @@ hack:
 {% endfor %}
 
 
-# Tor profiles
-anon-tor1:
-  qvm.vm:
-    - template: whonix-ws-17
-    - label: yellow
-    - prefs: { netvm: sys-whonix }
 
-anon-tor2:
-  qvm.vm:
-    - template: whonix-ws-17
-    - label: yellow
-    - prefs: { netvm: sys-whonix }
+# Create two Workstations that must use the VPN⇒Tor gateway
+#   ws-tor-research  (strict research persona)
+#   ws-tor-forums    (forums/help persona)
 
-# VPN profiles
-anon-vpn-ru:
-  qvm.vm:
-    - template: deb12-anon
-    - label: yellow
-    - prefs: { netvm: sys-vpn-ru }
+whonix-ws-template-present:
+  cmd.run:
+    - name: qvm-ls --raw-list | grep -qx whonix-workstation-17 || qvm-template install whonix-workstation-17
 
-anon-vpn-nl:
-  qvm.vm:
-    - template: deb12-anon
-    - label: yellow
-    - prefs: { netvm: sys-vpn-nl }
+{% for ws in ['ws-tor-research','ws-tor-forums'] %}
+{{ ws }}-create:
+  cmd.run:
+    - name: |
+        set -e
+        if ! qvm-ls --raw-list | grep -qx {{ ws }}; then
+          qvm-create --class AppVM --template whonix-workstation-17 --label purple {{ ws }}
+          qvm-prefs {{ ws }} netvm sys-vpn-tor
+        fi
+

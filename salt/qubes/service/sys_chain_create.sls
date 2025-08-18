@@ -59,12 +59,31 @@ sys-net-hardening:
 # Whonix gateway
 sys-whonix:
   qvm.vm:
-    - template: whonix-gw-17
+    - template: whonix-workstation-17
     - label: green
     - prefs:
         netvm: sys-firewall
 
 
+# Create a Whonix-Gateway that rides over a VPN NetVM (default: sys-vpn-ru)
+# You can change upstream later with: qvm-prefs sys-vpn-tor netvm sys-vpn-nl
+# Result: sys-vpn-tor provides_network=True, NetVM=sys-vpn-ru (default), Tor runs inside it as usual—only now over your VPN.
+# Ensure base Whonix GW template exists
+
+whonix-gw-template-present:
+  cmd.run:
+    - name: qvm-ls --raw-list | grep -qx whonix-gateway-17 || qvm-template install whonix-gateway-17
+
+# Create sys-vpn-tor if missing
+sys-vpn-tor-create:
+  cmd.run:
+    - name: |
+        set -e
+        if ! qvm-ls --raw-list | grep -qx sys-vpn-tor; then
+          qvm-create --class AppVM --template whonix-gateway-17 --label blue sys-vpn-tor
+          qvm-prefs sys-vpn-tor provides_network True
+          qvm-prefs sys-vpn-tor netvm sys-vpn-ru
+        fi
 sys-usb:
   qvm.vm:
     - template: deb12-net-min

@@ -21,6 +21,15 @@ push-dns-forward-filter:
         nft add chain inet qubes fwd_dns { type filter hook forward priority 80; policy accept; }
         nft add rule inet qubes fwd_dns ip saddr != $SYSIP udp dport 53 drop
         nft add rule inet qubes fwd_dns ip saddr != $SYSIP tcp dport 53 drop
+
+        # Exclude packets FROM sys-vpn-tor (Whonix-GW) so Tor handles DNS internally
+        nft add rule ip nat prerouting ip saddr $GWIP udp dport 53 accept
+        nft add rule ip nat prerouting ip saddr $GWIP tcp dport 53 accept
+        
+        # DNAT everything else to sys-dns
+        nft add rule ip nat prerouting udp dport 53 dnat to $SYSIP
+        nft add rule ip nat prerouting tcp dport 53 dnat to $SYSIP
+
         exit 0
         EOF
         qvm-run -u root sys-firewall 'chmod +x /rw/config/qubes-firewall-user-script'
@@ -47,3 +56,4 @@ set-updatevm-sys-firewall:
   cmd.run:
     - name: qubes-prefs updatevm sys-firewall
     - unless: qubes-prefs get updatevm | grep -q sys-firewall
+
