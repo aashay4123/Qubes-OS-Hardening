@@ -1,0 +1,21 @@
+table inet filter {
+  chain input {
+    type filter hook input priority 0;
+    policy drop;
+    iif lo accept
+    ct state { established, related } accept
+  }
+  chain forward {
+    type filter hook forward priority 0;
+    policy drop;
+  }
+  chain output {
+    type filter hook output priority 0;
+    policy drop;
+    oif lo accept
+    ct state { established, related } accept
+    # Allow only VPN tunnel (e.g., WireGuard/ OpenVPN)
+    udp dport 51820 accept
+    tcp dport {1194,443} accept
+  }
+}

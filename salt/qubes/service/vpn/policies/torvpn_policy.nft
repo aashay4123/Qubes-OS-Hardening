@@ -1,0 +1,43 @@
+# /srv/salt/vpn/policies/torvpn_policy.nft
+# Whonix-GW (sys-vpn-tor) acting as a bridge: AppVMs -> Tor -> VPN
+
+table inet tor_bridge {
+
+  chain input {
+    type filter hook input priority 0; policy drop;
+
+    iif lo accept
+    ct state established,related accept
+
+    # Diagnostics
+    ip protocol icmp accept
+    ip6 nexthdr ipv6-icmp accept
+
+    # Whonix services (Tor, onion-grater) listen locally — loopback covers them.
+  }
+
+  chain forward {
+    type filter hook forward priority 0; policy drop;
+
+    # Permit forwarding between internal vifs (from AppVMs) and uplink (towards VPN VM)
+    iifname "vif*" oifname "vif*" accept
+    # (The exact vif names depend on Qubes wiring; allowing vif*<->vif* is fine inside Whonix-GW)
+
+    # BLOCK easy DNS bypasses in forward
+    udp dport 853 drop
+    tcp dport 853 drop
+    # Optional: block QUIC
+    udp dport 443 drop
+  }
+
+  chain output {
+    type filter hook output priority 0; policy accept;
+
+    ct state established,related accept
+    oif lo accept
+
+    # Tor is TCP-based; keep UDP minimal (NTP if you must)
+    udp dport != 123 drop
+  }
+}
+If Whonix updates/health get impacted, loosen the output chain (remove the UDP drop or allow what’s needed).

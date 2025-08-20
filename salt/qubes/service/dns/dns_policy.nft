@@ -1,0 +1,72 @@
+# /srv/salt/vpn/policies/dns_policy.nft
+# Hardened egress policy for sys-dns (dnscrypt-proxy / DoT / optional DoH)
+# - Accept only local stub DNS on 127.0.0.1:53
+# - Allow outbound to a strict IP:port allowlist (v4/v6)
+# - Drop all other :53/:853; optionally restrict :443 (DoH) to a strict list
+# - Tight INPUT/FORWARD; permissive OUTPUT except where restricted
+#
+# Usage (inside sys-dns):
+#   - Put this file at /etc/nftables.d/60-sysdns-egress.nft
+#   - Ensure /etc/nftables.conf includes:  include "/etc/nftables.d/*.nft"
+#   - systemctl enable --now nftables
+
+# -----------------------------
+# EDIT THESE SETS TO YOUR NEEDS
+# -----------------------------
+define allow_dns_v4_ips   = { 9.9.9.9, 149.112.112.112, 1.1.1.1, 1.0.0.1 }
+define allow_dns_v4_ports = { 853 }        # DoT ports you use; add 53 if truly needed
+
+# If you actually use IPv6 upstreams, add them and DO NOT disable IPv6 system-wide.
+define allow_dns_v6_ips   = { }            # e.g. 2620:fe::9, 2620:fe::fe, 2606:4700:4700::1111
+define allow_dns_v6_ports = { 853 }
+
+# Optional DoH restriction (TCP/443). If you want to allow DoH only to fixed IPs, list them here.
+# Leave empty to block all DoH; remove the blocking section if you want unrestricted 443.
+define allow_doh_v4_ips   = { }            # e.g. 194.242.2.2
+define allow_doh_v6_ips   = { }
+
+table inet sysdns_egress {
+
+  chain input {
+    type filter hook input priority 0; policy drop;
+
+    # Allow local processes and established flows
+    iif lo accept
+    ct state established,related accept
+
+    # ICMPv4/ICMPv6 (diagnostics); comment these if you prefer stricter
+    ip protocol icmp accept
+    ip6 nexthdr ipv6-icmp accept
+
+    # Accept local stub DNS
+    tcp dport 53 iif lo accept
+    udp dport 53 iif lo accept
+  }
+
+  chain forward {
+    type filter hook forward priority 0; policy drop;
+  }
+
+  chain output {
+    type filter hook output priority 0; policy accept;
+
+    # 1) Keep local stub usage only for :53
+    udp dport 53 ip  daddr != 127.0.0.1 drop
+    tcp dport 53 ip  daddr != 127.0.0.1 drop
+    udp dport 53 ip6 daddr != ::1        drop
+    tcp dport 53 ip6 daddr != ::1        drop
+
+    # 2) Allowlisted DNS upstreams — v4
+    ip daddr != $allow_dns_v4_ips  udp dport $allow_dns_v4_ports drop
+    ip daddr != $allow_dns_v4_ips  tcp dport $allow_dns_v4_ports drop
+
+    # 3) Allowlisted DNS upstreams — v6 (comment this block if you disabled IPv6 system-wide)
+    ip6 daddr != $allow_dns_v6_ips udp dport $allow_dns_v6_ports drop
+    ip6 daddr != $allow_dns_v6_ips tcp dport $allow_dns_v6_ports drop
+
+    # 4) Optional DoH restriction (TCP/443). If you don’t use DoH at all, this blocks it.
+    #    If you do, list resolver IPs above and these rules will allow only those.
+    tcp dport 443 ip  daddr != $allow_doh_v4_ips drop
+    tcp dport 443 ip6 daddr != $allow_doh_v6_ips drop
+  }
+}

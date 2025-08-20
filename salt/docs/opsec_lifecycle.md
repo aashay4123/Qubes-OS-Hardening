@@ -1,15 +1,3 @@
-Perfect — I’ll expand the **50 techniques into a full lifecycle-style handbook** with:
-
-- ✅ **Technique name**
-- ✅ **Explanation** (why it’s used, how it works)
-- ✅ **Advantages** (what it protects against)
-- ✅ **Disadvantages / trade-offs** (why some DNMs still failed despite using it)
-- ✅ **Checklist form** at the end of each phase
-
-I’ll draft it as a **Markdown file** (`dnm_opsec_lifecycle.md`) to live in your `/srv/salt/qubes/docs/`.
-
----
-
 # 📖 dnm_opsec_lifecycle.md
 
 **Darknet Market / Forum OPSEC Lifecycle Handbook (2025)**

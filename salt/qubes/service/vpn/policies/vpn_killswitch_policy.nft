@@ -1,0 +1,68 @@
+# /srv/salt/vpn/policies/vpn_killswitch_policy.nft
+# Leak-proof policy for a VPN NetVM (sys-vpn-ru / sys-vpn-nl)
+
+define tuns = { "wg0", "tun0" }                 # tunnel interfaces you actually use
+define vpn_upstream_v4_udp = { 203.0.113.10 . 51820 }  # WireGuard example: IP.port
+define vpn_upstream_v4_tcp = { 198.51.100.7  . 1194  } # OpenVPN example: IP.port
+define vpn_upstream_v6_udp = { }                # add if you use v6
+define vpn_upstream_v6_tcp = { }
+
+table inet vpn_lock {
+
+  chain input {
+    type filter hook input priority 0; policy drop;
+
+    iif lo accept
+    ct state established,related accept
+
+    # Diagnostics (optional)
+    ip protocol icmp accept
+    ip6 nexthdr ipv6-icmp accept
+
+    # Always accept packets coming from tunnel to local services (rare)
+    iifname $tuns accept
+  }
+
+  chain forward {
+    type filter hook forward priority 0; policy drop;
+
+    # Only allow forwarding AppVM <-> tunnel
+    iifname "vif*" oifname $tuns accept
+    iifname $tuns   oifname "vif*" accept
+  }
+
+  chain output {
+    type filter hook output priority 0; policy drop;
+
+    ct state established,related accept
+    oif lo accept
+
+    # Allow traffic *inside* the tunnel freely
+    oifname $tuns accept
+
+    # Optional: allow bootstrap DNS to Qubes resolver only
+    ip daddr 10.139.1.1 udp dport 53 accept
+    ip daddr 10.139.1.1 tcp dport 53 accept
+
+    # Allow contacting VPN servers on uplink (no other Internet except tunnels)
+    # v4 UDP (WireGuard)
+    @vpn_upstream_v4_udp udp dport . th dport accept
+    # v4 TCP (OpenVPN)
+    @vpn_upstream_v4_tcp tcp dport . th dport accept
+
+    # v6, if used
+    @vpn_upstream_v6_udp meta nfproto ipv6 udp dport . th dport accept
+    @vpn_upstream_v6_tcp meta nfproto ipv6 tcp dport . th dport accept
+  }
+}
+
+
+'''
+
+How to fill @set . port pairs
+The @set syntax above uses concatenation of IP . PORT. If your nftables doesn’t support sets of tuples this way, replace with explicit rules like:
+ip daddr 203.0.113.10 udp dport 51820 accept
+ip daddr 198.51.100.7  tcp dport 1194  accept
+Alternatively, split into separate define sets for 
+IPs and simple udp dport {…} with ip daddr @set checks.
+'''
