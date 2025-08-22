@@ -18,11 +18,11 @@ get-sys-dns-ip:
         set -e
         qvm-ls --raw-data --fields NAME,IP | awk -F'|' '$1=="{{ dns_vm }}"{print $2}' | tr -d ' \t' > /var/tmp/sysdns.ip
 
-get-tor-gw-ip:
+get-sys-vpn-tor-ip:
   cmd.run:
     - name: |
         set -e
-        qvm-ls --raw-data --fields NAME,IP | awk -F'|' '$1=="{{ tor_gw }}"{print $2}' | tr -d ' \t' > /var/tmp/sysvpntor.ip || true
+        qvm-ls --raw-data --fields NAME,IP | awk -F'|' '$1=="sys-vpn-tor"{print $2}' | tr -d ' \t' > /var/tmp/sysvpntor.ip || true
 
 # -------------------------
 #  Ensure Qubes UpdateVM is sys-firewall (optional but handy)
@@ -119,12 +119,6 @@ install-sys-firewall-user-script:
         nft list chain inet qubes fwd_dot | grep -q 'tcp dport 853 drop' || \
           nft add rule inet qubes fwd_dot tcp dport 853 drop
 
-        {% if block_quic %}
-        # (Optional) Block QUIC to reduce stealth DoH surface; may impact some sites.
-        nft list chain inet qubes fwd_dot | grep -q 'udp dport 443 drop' || \
-          nft add rule inet qubes fwd_dot udp dport 443 drop
-        {% endif %}
-
         exit 0
         EOF
 
@@ -134,103 +128,53 @@ install-sys-firewall-user-script:
       - cmd: get-sys-dns-ip
       - cmd: get-tor-gw-ip
       - qvm.run: sys-firewall-packages
+      
 
-# -------------------------
-#  Suricata IDS on sys-firewall (AF_PACKET)
-#  ------------------------- #}
-sys-firewall-suricata:
+# ---------- Per-VM egress allow-lists ---------- #}
+sys-fw-egress-setup:
   qvm.run:
     - name: sys-firewall
     - user: root
     - cmd: |
         set -e
-        apt-get update
-        apt-get -y install suricata jq ca-certificates || true
-        update-ca-certificates || true
-
-        # Minimal AF_PACKET IDS config
-        install -d -m 0755 /etc/suricata /var/lib/suricata/rules /var/log/suricata
-        cat >/etc/suricata/suricata.yaml <<'EOF'
-        %YAML 1.1
-        ---
-        vars:
-          address-groups:
-            HOME_NET: "[10.0.0.0/8,172.16.0.0/12,192.168.0.0/16]"
-        af-packet:
-          - interface: any
-            cluster-id: 99
-            cluster-type: cluster_flow
-            defrag: yes
-        outputs:
-          - eve-log:
-              enabled: yes
-              filetype: regular
-              filename: /var/log/suricata/eve.json
-              community-id: true
-              types: [ alert, dns, tls, http, ssh, stats ]
-        logging:
-          default-log-level: notice
-        app-layer:
-          protocols:
-            tls: { enabled: yes }
-            http: { enabled: yes }
-            dns: { enabled: yes }
-        detection:
-          profile: medium
-          sgh-mpm-context: auto
-        default-rule-path: /var/lib/suricata/rules
-        rule-files:
-          - suricata.rules
-        EOF
-
-        # Rules: ET Open (best-effort); continue if offline
-        TMP="$(mktemp -d)"
-        if curl -fsSL https://rules.emergingthreats.net/open/suricata-7.0/emerging.rules.tar.gz -o "$TMP/et.tar.gz"; then
-          tar -xzf "$TMP/et.tar.gz" -C "$TMP"
-          cp -f "$TMP"/rules/*.rules /var/lib/suricata/rules/ 2>/dev/null || true
-          cat /var/lib/suricata/rules/*.rules > /var/lib/suricata/rules/suricata.rules
-        else
-          : > /var/lib/suricata/rules/suricata.rules
-        fi
-        rm -rf "$TMP"
-
-        # Logrotate
-        cat >/etc/logrotate.d/suricata <<'EOF'
-        /var/log/suricata/*.log /var/log/suricata/*.json {
-          rotate 7
-          daily
-          compress
-          missingok
-          notifempty
-          copytruncate
-        }
-        EOF
-
-        # Start after network-online
-        install -d -m 0755 /etc/systemd/system/suricata.service.d
-        cat >/etc/systemd/system/suricata.service.d/override.conf <<'EOF'
-        [Unit]
-        After=network-online.target
-        Wants=network-online.target
-        EOF
-        systemctl daemon-reload
-
-        # Reduce packet offload surprises for AF_PACKET at boot
-        install -m 0755 /rw/config/rc.local /rw/config/rc.local 2>/dev/null || true
-        cat >/rw/config/rc.local <<'EOF'
+        mkdir -p /rw/config/egress
+        cat >/usr/local/sbin/egress-apply <<'EOF'
         #!/bin/sh
-        for i in $(ls /sys/class/net | grep -E '^(eth|ens|vif)'); do
-          ethtool -K "$i" gro off lro off 2>/dev/null || true
-        done
-        exit 0
+        set -eu
+        MAP="/rw/config/egress/ips.map"
+        [ -f "$MAP" ] || { echo "No ips.map"; exit 0; }
+        nft list table inet qubes >/dev/null 2>&1 || nft add table inet qubes
+        nft list chain inet qubes fwd_egress >/dev/null 2>&1 || \
+          nft add chain inet qubes fwd_egress { type filter hook forward priority 94; policy accept; }
+        while read -r VM IP; do
+          [ -z "$VM" ] && continue
+          [ -z "$IP" ] && continue
+          L="/rw/config/egress/${VM}.list"
+          SET="eg_${VM}"
+          if ! nft list set inet qubes "$SET" >/dev/null 2>&1; then
+            nft add set inet qubes "$SET" { type ipv4_addr; flags interval; }
+          else
+            nft flush set inet qubes "$SET" || true
+          fi
+          if [ -f "$L" ]; then
+            while read -r CIDR; do
+              [ -z "$CIDR" ] && continue
+              nft add element inet qubes "$SET" { $CIDR } || true
+            done < "$L"
+          fi
+          RULE="ip saddr $IP ip daddr != @$SET drop"
+          nft list chain inet qubes fwd_egress | grep -Fq "$RULE" || nft add rule inet qubes fwd_egress $RULE
+        done < "$MAP"
         EOF
-        chmod +x /rw/config/rc.local
-        /rw/config/rc.local || true
+        chmod +x /usr/local/sbin/egress-apply
 
-        systemctl enable suricata
-        systemctl restart suricata || systemctl status --no-pager suricata || true
-    - require:
-      - qvm.run: sys-firewall-packages
+sys-fw-egress-map:
+  cmd.run:
+    - name: |
+        set -e
+        qvm-ls --raw-data --fields NAME,IP | awk -F'|' 'NR>1{gsub(/ /,"",$1);gsub(/ /,"",$2); if($2!="") print $1" "$2}' > /var/tmp/ips.map
+        cat /var/tmp/ips.map | qvm-run -u root --pass-io sys-firewall 'cat > /rw/config/egress/ips.map'
+        qvm-run -u root sys-firewall /usr/local/sbin/egress-apply
 
 # -------------------------
 #  Final: run the firewall user script once more (idempotent) to ensure rules are live
@@ -242,3 +186,4 @@ apply-firewall-user-script:
     - cmd: /rw/config/qubes-firewall-user-script || true
     - require:
       - cmd: install-sys-firewall-user-script
+

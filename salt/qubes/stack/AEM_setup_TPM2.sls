@@ -21,8 +21,6 @@
 # TrenchBoot AEM is the actively maintained TPM2/UEFI way to do AEM on Qubes; the repo and steps above are from the June 2025 install doc. 
 # Qubes endorsed/covered the work publicly; their article explains why TrenchBoot replaces the old TPM1.2/TXT stack and enables TPM2. 
 # If your platform can’t do DRTM, Heads on certified laptops gives you robust measured boot with TPM2. 
-# Qubes OS
-
 
 
 {% set REPO = '/etc/yum.repos.d/aem.repo' %}
@@ -70,10 +68,7 @@ aem-install:
       else
         pkgs+=( grub2-pc grub2-pc-modules )
       fi
-      # Add AMD SKL loader if AMD
-      if grep -qi 'amd' /proc/cpuinfo; then
-        pkgs+=( secure-kernel-loader )
-      fi
+
       # Reinstall if Qubes has same NEVR; then install new-only (per doc)
       qubes-dom0-update --disablerepo="*" --enablerepo=aem --action=reinstall -y "${pkgs[@]}" || true
       qubes-dom0-update --disablerepo="*" --enablerepo=aem --action=install   -y "${pkgs[@]}"
@@ -154,7 +149,6 @@ final-health:
       set -euo pipefail
       alert(){ command -v qrexec-client-vm >/dev/null && printf "%s" "$*" | qrexec-client-vm sys-alert my.alert.Send || echo "[ALERT] $*"; }
       ok(){ echo "OK: $*"; }
-
       FAIL=0
 
       # AEM packages

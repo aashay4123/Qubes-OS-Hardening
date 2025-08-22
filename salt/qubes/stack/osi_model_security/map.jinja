@@ -1,0 +1,42 @@
+{# Shared config & sane defaults, pulled from pillar #}
+{% set cfg = {
+  'strict_crypto': pillar.get('osi_model_security:strict_crypto', True),
+  'enable_dnsmasq_logs': pillar.get('osi_model_security:enable_dnsmasq_logs', True),
+  'enable_ecs': pillar.get('osi_model_security:enable_ecs', False),
+  'enable_dnstap': pillar.get('osi_model_security:enable_dnstap', False),
+
+  'usb_policy': {
+    'storage_allowed_tags': pillar.get('usb_policy:storage_allowed_tags', ['usb_storage_ok']),
+  },
+
+  'dns_tuning': {
+    'stats_interval': pillar.get('dns:stats_interval', 60),
+    'rotate_weeks': pillar.get('dns:rotate_weeks', 8),
+  },
+
+  'transport': {
+    'chrony_nts_server': pillar.get('transport:chrony_nts_server', 'time.cloudflare.com'),
+    'debian_openssl_seclevel': pillar.get('transport:debian_openssl_seclevel', 2),
+  },
+
+  'vms': pillar.get('osi_model_security:vms', {}),
+  'app_vms': pillar.get('osi_model_security:app_vms', {})
+  'disposables': pillar.get('disposables', {
+    'default_dispvm': None,
+    'create': {},
+    'per_vm_default': {},
+    'force_policies': {'openurl_tags': [], 'openinvm_tags': []},
+    'fallback': {'openurl': 'ask', 'openinvm': 'ask'}
+  }),
+
+} %}
+
+{# Gather all template names used anywhere for transport hardening #}
+{% set templates = [] %}
+{% for _, spec in cfg.vms.items() %}
+  {% if spec.get('template') %}{% do templates.append(spec.get('template')) %}{% endif %}
+{% endfor %}
+{% for _, spec in cfg.app_vms.items() %}
+  {% if spec.get('template') %}{% do templates.append(spec.get('template')) %}{% endif %}
+{% endfor %}
+{% set templates = templates|unique %}

@@ -67,6 +67,7 @@ printf "%-14s -> %s\n" sys-firewall "$(qvm-prefs sys-firewall netvm)"
 printf "%-14s -> %s\n" sys-dns      "$(qvm-prefs sys-dns netvm)"
 [[ "$MODE" != "dns-tor-vpn" ]] && printf "%-14s -> %s\n" "$VPN" "$(qvm-prefs "$VPN" netvm)"
 qvm-ls --raw-list | grep -qx sys-vpn-tor && printf "%-14s -> %s\n" sys-vpn-tor "$(qvm-prefs sys-vpn-tor netvm)"
+chmod 0755 /usr/local/bin/switch-vpn-topology
 
 # USAGE
 

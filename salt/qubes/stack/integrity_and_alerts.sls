@@ -207,7 +207,7 @@ tmpl-baseline:
   cmd.run:
     - name: |
         set -e
-        LIST="deb_harden deb_harden_min deb_dev deb_work deb_personal fedora-42-vpn whonix-gateway-17 whonix-workstation-17"
+        LIST="deb_harden deb_harden_min deb_dev deb_hack fedora-42-vpn whonix-gateway-17 whonix-workstation-17"
         qvm-run -q --pass-io vault-secrets 'mkdir -p /home/user/.template-hashes'
         mkdir -p /var/lib/qubes/template-hashes
         for t in $LIST; do

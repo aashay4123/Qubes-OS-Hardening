@@ -1,14 +1,6 @@
 # OPSEC OS EXTRAS: telemetry minimization & hygiene across templates and key service VMs.
 
-{% set deb_templates = ['deb_harden','deb_harden_min','deb_work','deb_dev','deb_personal'] %}
-{% set publish_tpl = 'deb_publish' %}
-
-# 0) Drop the README into dom0 for reference
-opsec-readme:
-  file.managed:
-    - name: /usr/local/share/opsec_extra_readme.md
-    - mode: '0644'
-    - contents_pillar: opsec_extra_readme   # optionally use pillars; else paste the markdown by hand
+{% set deb_templates = ['deb_harden','deb_harden_min','deb_work','deb_hack'] %}
 
 # 1) Disable persistent journals + coredumps + shell history in Debian templates
 {% for t in deb_templates %}
@@ -115,11 +107,3 @@ dom0-nosleep:
     - name: |
         set -e
         systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target || true
-
-# 6) Prepare a minimal Debian publish template (tools installed by the next state)
-deb-publish-template:
-  cmd.run:
-    - name: |
-        set -e
-        qvm-ls --raw-list | grep -qx {{ publish_tpl }} || qvm-clone deb_harden_min {{ publish_tpl }}
-        qvm-prefs {{ publish_tpl }} label yellow

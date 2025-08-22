@@ -9,8 +9,8 @@
 
 {% set ALLOWLIST_V4 = [
   # --- EXAMPLES (replace to fit your setup) ---
-  # '9.9.9.9:853', '149.112.112.112:853',   # Quad9 DoT
-  # '1.1.1.1:853','1.0.0.1:853',            # Cloudflare DoT
+  '9.9.9.9:853', '149.112.112.112:853',   # Quad9 DoT
+  '1.1.1.1:853','1.0.0.1:853',            # Cloudflare DoT
   # '9.9.9.9:53','149.112.112.112:53'       # If using DNSCrypt on :53 to fixed IPs (rare; confirm!)
 ] %}
 
@@ -195,9 +195,10 @@ sys-dns-nftables:
         }
         EOF
 
-        # Ensure main includes
+        # nftables: baseline + includes
+        install -m 0644 /dev/null /etc/nftables.conf
         if ! grep -q 'include "/etc/nftables.d/*.nft"' /etc/nftables.conf 2>/dev/null; then
-          echo 'include "/etc/nftables.d/*.nft"' > /etc/nftables.conf
+          printf 'include "/etc/nftables.d/*.nft"\n' > /etc/nftables.conf
         fi
 
         systemctl enable nftables
