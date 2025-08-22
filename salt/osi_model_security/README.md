@@ -301,3 +301,58 @@ Split-SSH agent availability (work/dev tag):
 SSH_AUTH_SOCK=${SSH_AUTH_SOCK:-} ssh -T git@github.com || true
 
 Try from a VM without an allowed tag → expect ask/deny as per your fallback.
+
+---
+
+sudo qubesctl --all state.apply osi_model_security
+
+# Set initial baselines (first run only)
+
+sudo systemctl start template-hash-verify.service || true
+sudo systemctl start policy-verify.service || true
+sudo systemctl start dom0-boot-verify.service || true
+{% if I.tpm.enable %}sudo systemctl start tpm-attest-verify.service || true{% endif %}
+
+# Run the all-in-one verifier:
+
+sudo /usr/local/sbin/verify_security_integrity
+
+## Notes
+
+sys-alert is networkless and receives alerts only from the VMs you list in allow_senders; everyone else is denied with notify=yes.
+
+Signed-only deployment: signed-highstate enforces sig-check → stage → atomic rsync → baseline update → state.highstate.
+
+Hashes use stable tar ordering (--sort=name --mtime=@0 --numeric-owner) to prevent false diffs.
+
+TPM is optional; if enabled, we baseline PCRs {{TP.pcrs|join(', ')}} for bank {{TP.bank}} and alert on drift.
+
+Xen mitigations line is configurable; a reboot is required for it to take effect.
+
+## in dom0
+
+sudo qubesctl --all state.apply osi_model_security
+
+# sanity checks
+
+qubes-prefs clockvm
+cat /etc/qubes/policy.d/25-comms.policy | sed -n '1,120p'
+/usr/local/sbin/verify_boot_firmware
+sudo panic # (safe to run; it only shuts down VMs matching your patterns)
+Notes / optional next steps
+If you later want monthly key rotation, we’ll add a disabled-by-default timer that:
+
+generates fresh SSH subkeys in vault-ssh,
+
+generates GPG subkeys (sign/encrypt/auth) in vault-gpg,
+
+updates authorized_keys/agent configs via qrexec and prompts you through sys-alert,
+
+archives old keys in the vault with a signed, dated manifest.
+(This is invasive; we’ll keep it opt-in via pillar when you’re ready.)
+
+The comms policy already defaults to deny everywhere and asks on allowed tag pairs; if you want per-VM exceptions, add tags (qvm-tags <vm> -a work) and you’re done.
+
+The side-channel role ships disabled—flip sidechannel.enable: true after you choose core mapping appropriate for your CPU topology.
+
+If you want me to merge the new checks into your all-in-one healthcheck (validate clockvm, grep for key lines in 25-comms.policy, and run verify_boot_firmware), say the word and I’ll extend that script too.

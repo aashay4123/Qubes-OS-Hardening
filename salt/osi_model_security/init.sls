@@ -59,6 +59,14 @@ include:
   - osi_model_security.roles.secrets_advanced
   - osi_model_security.roles.opsec
   - osi_model_security.roles.hardening
+  - osi_model_security.roles.integrity_alerts
+  - osi_model_security.roles.clockvm
+  - osi_model_security.roles.comms
+  - osi_model_security.roles.sidechannel
+  - osi_model_security.roles.emergency
+  - osi_model_security.roles.boot_fw
+  - osi_model_security.roles.healthcheck_all
+
 # 2) NetVM chain (app → sys-firewall → sys-dns → sys-ids → sys-net) from pillar
 {% if cfg.vms.get('sys-firewall') and cfg.vms.get('sys-firewall').get('netvm') %}
 sys-firewall-netvm:

@@ -10,3 +10,5 @@ base:
     - roles.secrets
     - roles.opsec
     - roles.hardening
+    - roles.integrity_alerts
+    - roles.clock_comms
