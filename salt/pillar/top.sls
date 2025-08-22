@@ -6,3 +6,6 @@ base:
     - roles.transport
     - roles.undercover
     - roles.hvm_install
+    - roles.net_topology
+    - roles.secrets
+    - roles.opsec

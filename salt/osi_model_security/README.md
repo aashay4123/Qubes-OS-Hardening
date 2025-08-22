@@ -281,3 +281,23 @@ sudo ~/osi-security-healthcheck.sh --dvm "debian-12-dvm fedora-40-dvm" \
 ```
 
 ```
+
+## Quick tests
+
+In a work-tagged AppVM:
+
+# Password lookup should route to vault-pass automatically
+
+qpass github.com/you/repo
+
+Split-GPG sign (work/dev/prod tag):
+
+echo "test" | qgpg --clearsign | cat
+
+Split-SSH agent availability (work/dev tag):
+
+# Should prompt/allow via policy to vault-ssh
+
+SSH_AUTH_SOCK=${SSH_AUTH_SOCK:-} ssh -T git@github.com || true
+
+Try from a VM without an allowed tag → expect ask/deny as per your fallback.

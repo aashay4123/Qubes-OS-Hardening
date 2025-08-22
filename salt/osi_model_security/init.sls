@@ -53,6 +53,11 @@ include:
   - osi_model_security.roles.dispvm 
   - osi_model_security.roles.dom0_undercover
   - osi_model_security.roles.hvm_install
+  - osi_model_security.roles.topology 
+  - osi_model_security.roles.net_guard  
+  - osi_model_security.roles.secrets
+  - osi_model_security.roles.secrets_advanced
+  - osi_model_security.roles.opsec
   
 # 2) NetVM chain (app → sys-firewall → sys-dns → sys-ids → sys-net) from pillar
 {% if cfg.vms.get('sys-firewall') and cfg.vms.get('sys-firewall').get('netvm') %}
