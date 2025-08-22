@@ -85,3 +85,11 @@ qpass-ws github.com/youruser
 ```
 
 ---
+
+## Network and Firewall Management
+
+https://www.qubes-os.org/doc/firewall/#enabling-networking-between-two-qubes
+
+## Managing Qubes Standalone VMs
+
+planning to add 1 OPENBSD

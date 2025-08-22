@@ -4,3 +4,5 @@ base:
     - roles.dns
     - roles.usb
     - roles.transport
+    - roles.undercover
+    - roles.hvm_install
