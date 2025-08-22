@@ -9,3 +9,4 @@ base:
     - roles.net_topology
     - roles.secrets
     - roles.opsec
+    - roles.hardening
