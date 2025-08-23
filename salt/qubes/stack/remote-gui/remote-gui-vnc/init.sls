@@ -12,6 +12,19 @@
 {% set SR   = AUDIO.get('sample_rate',48000) %}
 {% set CH   = AUDIO.get('channels',2) %}
 
+
+{% set PROXY_TPL = R.get('proxy_template','fedora-42-xfce') %}
+{% set PROXY_LABEL = R.get('proxy_label','yellow') %}
+
+create-proxy-qube:
+  cmd.run:
+    - name: |
+        set -e
+        if ! qvm-ls --raw-list | grep -qx {{ PROXY }}; then
+          qvm-create --class AppVM --template {{ PROXY_TPL }} --label {{ PROXY_LABEL }} {{ PROXY }}
+          qvm-prefs {{ PROXY }} netvm sys-firewall
+        fi
+
 {# ---------- 0) dom0 packages & service (VNC on loopback) ---------- #}
 qubes-remote-desktop:
   cmd.run:
@@ -129,6 +142,8 @@ proxy-bind-dom0-vnc:
         # enable in user session
         sudo -u user systemctl --user daemon-reload
         sudo -u user systemctl --user enable --now qct-vnc.service
+    - require:
+      - cmd: create-proxy-qube
 
 # Strict egress firewall on {{ PROXY }} (22/tcp to Mac only)
 proxy-firewall:
@@ -138,6 +153,8 @@ proxy-firewall:
         qvm-firewall {{ PROXY }} reset || true
         qvm-firewall {{ PROXY }} add action=accept proto=tcp dsthost={{ MACH }} dstports={{ MACP }}
         qvm-firewall {{ PROXY }} set default=drop
+    - require:
+      - cmd: create-proxy-qube
 
 # Reverse SSH to publish the VNC pipe on your Mac:  localhost:5901 on Mac -> local 15901 in PROXY
 proxy-reverse-vnc-ssh:
@@ -163,6 +180,8 @@ proxy-reverse-vnc-ssh:
         EOF
         systemctl --user daemon-reload
         systemctl --user enable --now remote-vnc-reverse-ssh.service
+    - require:
+      - cmd: create-proxy-qube
 
 {# ---------- 4) proxy qube: audio pull from dom0 via qrexec, encode, push over SSH to Mac ---------- #}
 {% if AUDIO.get('enable', True) %}
@@ -196,6 +215,8 @@ proxy-audio-pipeline:
         EOF
         systemctl --user daemon-reload
         systemctl --user enable --now remote-audio.service
+    - require:
+      - cmd: create-proxy-qube
 {% endif %}
 
 {# ---------- 5) quick helpers & health ---------- #}

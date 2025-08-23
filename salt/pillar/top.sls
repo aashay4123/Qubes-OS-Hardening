@@ -13,3 +13,4 @@ base:
     - roles.integrity_alerts
     - roles.clock_comms
     - roles.healthcheck_user_merge
+    - remote_gui
