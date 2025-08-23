@@ -1,30 +1,30 @@
 {# Shared config & sane defaults, pulled from pillar #}
 {% set cfg = {
-  'strict_crypto':      pillar.get('osi_model_security:strict_crypto', True),
-  'enable_dnsmasq_logs': pillar.get('osi_model_security:enable_dnsmasq_logs', True),
-  'enable_ecs':         pillar.get('osi_model_security:enable_ecs', False),
-  'enable_dnstap':      pillar.get('osi_model_security:enable_dnstap', False),
+  'strict_crypto':      salt['pillar.get']('osi_model_security:strict_crypto', True),
+  'enable_dnsmasq_logs': salt['pillar.get']('osi_model_security:enable_dnsmasq_logs', True),
+  'enable_ecs':         salt['pillar.get']('osi_model_security:enable_ecs', False),
+  'enable_dnstap':      salt['pillar.get']('osi_model_security:enable_dnstap', False),
 
   'usb_policy': {
-    'storage_allowed_tags': pillar.get('usb_policy:storage_allowed_tags', ['usb_storage_ok']),
+    'storage_allowed_tags': salt['pillar.get']('usb_policy:storage_allowed_tags', ['usb_storage_ok']),
   },
 
   'dns_tuning': {
-    'stats_interval': pillar.get('dns:stats_interval', 60),
-    'rotate_weeks':   pillar.get('dns:rotate_weeks', 8),
+    'stats_interval': salt['pillar.get']('dns:stats_interval', 60),
+    'rotate_weeks':   salt['pillar.get']('dns:rotate_weeks', 8),
   },
 
   'transport': {
-    'chrony_nts_server':        pillar.get('transport:chrony_nts_server', 'time.cloudflare.com'),
-    'debian_openssl_seclevel':  pillar.get('transport:debian_openssl_seclevel', 2),
+    'chrony_nts_server':        salt['pillar.get']('transport:chrony_nts_server', 'time.cloudflare.com'),
+    'debian_openssl_seclevel':  salt['pillar.get']('transport:debian_openssl_seclevel', 2),
   },
 
   # Your VM inventories
-  'vms':      pillar.get('osi_model_security:vms', {}),
-  'app_vms':  pillar.get('osi_model_security:app_vms', {}),   # <-- fixed comma here ✅
+  'vms':      salt['pillar.get']('osi_model_security:vms', {}),
+  'app_vms':  salt['pillar.get']('osi_model_security:app_vms', {}),   {# fixed comma; comment in Jinja style #}
 
   # Disposables (global defaults + per-VM mappings)
-  'disposables': pillar.get('disposables', {
+  'disposables': salt['pillar.get']('disposables', {
     'default_dispvm': None,
     'create': {},
     'per_vm_default': {},
@@ -33,26 +33,26 @@
   }),
 
   # Optional feature buckets already used by other roles/states
-  'undercover_dom0': pillar.get('undercover_dom0', {}),
-  'secrets':         pillar.get('secrets', {}),
-  'opsec':           pillar.get('opsec', {}),
-  'hardening':       pillar.get('hardening', {}),
-  'integrity_alerts':pillar.get('integrity_alerts', {}),
-  'clock_comms':     pillar.get('clock_comms', {}),
-  'sidechannel':     pillar.get('sidechannel', {}),
-  'emergency':       pillar.get('emergency', {}),
-  'boot_firmware':   pillar.get('boot_firmware', {}),
+  'undercover_dom0': salt['pillar.get']('undercover_dom0', {}),
+  'secrets':         salt['pillar.get']('secrets', {}),
+  'opsec':           salt['pillar.get']('opsec', {}),
+  'hardening':       salt['pillar.get']('hardening', {}),
+  'integrity_alerts':salt['pillar.get']('integrity_alerts', {}),
+  'clock_comms':     salt['pillar.get']('clock_comms', {}),
+  'sidechannel':     salt['pillar.get']('sidechannel', {}),
+  'emergency':       salt['pillar.get']('emergency', {}),
+  'boot_firmware':   salt['pillar.get']('boot_firmware', {}),
 
   # === NEW: healthcheck_user_merge role config (defaults if Pillar not provided) ===
-  'healthcheck_user_merge': pillar.get('healthcheck_user_merge', {
+  'healthcheck_user_merge': salt['pillar.get']('healthcheck_user_merge', {
     'expect_templates': {
       'sys-net':      'fedora-42-minimal',
       'sys-firewall': 'fedora-42-minimal',
       'sys-dns':      'fedora-42-minimal',
       'app_default':  'deb_harden',
     },
-    'resolver': 'unbound',                      # or 'dnscrypt'
-    'vpn_vms':  ['sys-vpn-ru','sys-vpn-nl'],
+    'resolver': 'dnscrypt',
+    'vpn_vms':  ['sys-vpn','sys-vpn-nl'],
     'vpn_tor_gateway': 'sys-vpn-tor',
     'whonix_ws': ['ws-tor-research','ws-tor-forums'],
     'app_vms':   ['work','dev','personal'],
@@ -64,27 +64,27 @@
 
     # Deep checks: ON by default (flip to false in Pillar to mute)
     'checks': {
-      'dnsmasq':                True,   # sys-firewall dnsmasq presence/logging
-      'whonix_dns_exclusion':   True,   # NAT exclusion for Whonix VPN→Tor DNS
-      'appvm_firewall_drop':    True,   # AppVM default-drop in qvm-firewall
-      'ids_suricata':           True,   # sys-ids Suricata & eve.json
-      'resolver_logs':          True,   # unbound/dnscrypt logs present
-      'device_policies':        True,   # USB/Input/PCI policy sanity
-      'whonix_policy_file':     True,   # 50-whonix-vpn-tor.policy presence
-      'openssl_tls_policy':     True,   # OpenSSL/Fedora crypto policy check
-      'chrony_nts':             True,   # Chrony/chronyd + NTS hint
-      'ssh_client_hardening':   True,   # /etc/ssh/ssh_config.d/*
-      'apparmor_browsers':      True,   # Firefox/Chromium enforce
-      'vault_servers':          True,   # split-GPG/SSH services in vault
-      'client_wrappers':        True,   # qgpg*/qpass* wrappers in clients
-      'tags_split_services':    True,   # split-* tags on callers
-      'updatevm_sys_firewall':  True,   # dom0 updatevm suggestion
-      'dvm_spawn_test':         True,   # actually spawn DVMs
+      'dnsmasq':                True,
+      'whonix_dns_exclusion':   True,
+      'appvm_firewall_drop':    True,
+      'ids_suricata':           True,
+      'resolver_logs':          True,
+      'device_policies':        True,
+      'whonix_policy_file':     True,
+      'openssl_tls_policy':     True,
+      'chrony_nts':             True,
+      'ssh_client_hardening':   True,
+      'apparmor_browsers':      True,
+      'vault_servers':          True,
+      'client_wrappers':        True,
+      'tags_split_services':    True,
+      'updatevm_sys_firewall':  True,
+      'dvm_spawn_test':         True,
     }
   }),
 
-  # === Optional: extras role you enabled earlier (safe defaults) ===
-  'app_leak_guard_extras': pillar.get('app_leak_guard_extras', {
+  # === Optional: extras role (safe defaults) ===
+  'app_leak_guard_extras': salt['pillar.get']('app_leak_guard_extras', {
     'debian_templates': ['deb_harden','deb_harden_min','deb_work','deb_dev'],
     'fedora_templates': ['fedora-42-minimal','fedora-42-vpn'],
     'flags': {

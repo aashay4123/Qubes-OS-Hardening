@@ -6,7 +6,7 @@ healthcheck_user_merge:
     app_default:  deb_harden
 
   resolver: unbound
-  vpn_vms: [sys-vpn-ru, sys-vpn-nl]
+  vpn_vms: [sys-vpn, sys-vpn-nl]
   vpn_tor_gateway: sys-vpn-tor
   whonix_ws: [ws-tor-research, ws-tor-forums]
   app_vms: [work, dev, personal]

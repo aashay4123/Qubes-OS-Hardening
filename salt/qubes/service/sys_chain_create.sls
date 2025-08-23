@@ -106,7 +106,7 @@ set-updatevm-sys-firewall:
     - unless: qubes-prefs get updatevm | grep -q sys-firewall
 
 
-# Create a Whonix-Gateway that rides over a VPN NetVM (default: sys-vpn-ru)
+# Create a Whonix-Gateway that rides over a VPN NetVM (default: sys-vpn)
 # You can change upstream later with: qvm-prefs sys-vpn-tor netvm sys-vpn-nl
 # Result: sys-vpn-tor provides_network=True, NetVM=sys-vpn-ru (default), Tor runs inside it as usual—only now over your VPN.
 # Ensure base Whonix GW template exists
