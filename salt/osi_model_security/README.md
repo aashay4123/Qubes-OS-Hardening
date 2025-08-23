@@ -1,358 +1,405 @@
-# OSI model security — Qubes layout (at a glance)
+# OSI Model Security for Qubes OS — Paranoid Edition
 
-This document provides an overview of the OSI model security stack in Qubes, detailing the roles, controls, telemetry, and quick checks for each layer. It also includes a file tree structure for the Salt states and a brief runbook for common tasks.
+This repository of Salt states and policies turns a stock Qubes OS system into a layered, leak‑resistant "OSI model" security stack with integrity verification and alerting. It is designed for high‑threat environments.
 
-## File tree (dom0)
+> **Scope**
+>
+> - Multi‑hop NetVM topologies (basic, VPN, VPN→Tor) with strict **nftables** guards
+> - Per‑VM DNS transparency and control
+> - Device hardening for **USB**, input (kbd/mouse), and **microphone** consent
+> - Secrets workflow: **split‑GPG**, **split‑SSH**, **qubes‑pass**, tag‑based policies, admin time‑boxed tag
+> - OPSEC hygiene across templates and service VMs
+> - Vault air‑gaps; xen mitigations; TPM attestation
+> - Signed‑only Salt deployments + daily integrity checks
+> - End‑to‑end health checks and alerting via `sys-alert`
+
+---
+
+## TL;DR (Quick Start)
+
+1. **Review & edit Pillars**:
+
+   - `/srv/pillar/roles/net_topology.sls` — choose templates, set `active: basic`
+   - `/srv/pillar/roles/hardening.sls` — enable kill‑switch, DNS, app default‑drop
+   - `/srv/pillar/roles/secrets.sls` — set your vault VM names and allowed tags
+   - `/srv/pillar/roles/opsec.sls` — list Debian templates to harden
+   - `/srv/pillar/roles/integrity_alerts.sls` — set `vault_vm`, templates list, timers
+
+2. **Apply everything** from dom0:
+
+   ```bash
+   sudo qubesctl --all state.apply osi_model_security
+   ```
+
+3. **Initialize integrity baselines** (first run):
+
+   ```bash
+   sudo systemctl start template-hash-verify.service
+   sudo systemctl start policy-verify.service
+   sudo systemctl start dom0-boot-verify.service
+   sudo systemctl start tpm-attest-verify.service  # if TPM enabled
+   ```
+
+4. **Run the all‑in‑one check**:
+
+   ```bash
+   sudo /usr/local/sbin/osi-all-healthcheck
+   ```
+
+---
+
+## Repository Layout (dom0)
 
 ```
-
-/srv/
-├─ pillar/
-│ ├─ top.sls
-│ ├─ osi_model_security.sls # VM map + global toggles
-│ └─ roles/
-│ ├─ dns.sls # DNS tuning knobs
-│ ├─ usb.sls # USB policy knobs
-│ └─ transport.sls # Transport crypto knobs
-└─ salt/
-├─ top.sls
-└─ osi_model_security/
-├─ init.sls # orchestrator (ensures VMs; includes roles)
-├─ map.jinja # shared config & defaults
-└─ roles/
-├─ usb/init.sls
-├─ net/init.sls
-├─ dns/init.sls
-├─ firewall/init.sls
-├─ ids/init.sls
-├─ transport/init.sls
-└─ app/init.sls
-
+/srv/salt/osi_model_security/
+  init.sls                          # Orchestrator; includes roles below
+  roles/
+    topology/                       # NetVM creation & chain wiring
+      init.sls
+    net_guard/                      # nftables leak‑proofing for net VMs
+      init.sls
+    devices/                        # Device hardening (USB/input/mic) + verifier
+      strict-devices.sls
+    secrets/                        # Split‑GPG/SSH/pass basic policies & bootstrap
+      init.sls
+    secrets_advanced/               # Per‑op GPG, maintenance tag, logging, wrappers
+      init.sls
+    opsec/                          # Journald volatile, no coredumps, UTC, hostname rand
+      init.sls
+    hardening/                      # 100× systemic hardening (sysctl, VPN kill‑switch, etc.)
+      init.sls
+    integrity_alerts/               # Signed deploy, baselines, TPM, sys‑alert
+      init.sls
+    healthcheck_all/                # All‑in‑one healthcheck (CLI + timer)
+      init.sls
 ```
 
-## OSI model security stack (at a glance)
+**Pillars** under `/srv/pillar/roles/` mirror the roles above.
 
-```
-[ USB devices ] ──► dom0 policy (device+usb, device+block, Input* )
-                      │
-                      ▼
-                  sys-usb (usbguard default-deny; audit)
-                      │
-                ───── Net/traffic ─────────────────────────────────────────────────────────────
-                      │
-     App VMs  ──►  sys-firewall  ──►  sys-dns  ──►  sys-ids  ──►  sys-net  ──► Internet
-     (firejail/        (per-VM         (Unbound      (Suricata     (NIC +
-      AppArmor,         dnsmasq          recursive     AF_PACKET     L2/L3
-      default-drop      logs, default    resolver      inline        hardening)
-      firewall)         drop)            + logs)       + EVE logs)
-                      │            │
-       per-VM DNS logs┘            └── Validated DNS w/ query+reply logs (and optional DNSTAP)
-```
-
-**Trust boundaries**
-
-- **dom0** (policy only; no network)
-- **service VMs** (sys-usb/sys-net/sys-ids/sys-dns/sys-firewall)
-- **app VMs** (least privilege, per-VM firewall)
-
-Traffic path (default): `app → sys-firewall → sys-dns → sys-ids → sys-net → Internet`.
-
----
-
-# Layer-by-layer: role, controls, telemetry, quick checks
-
-| Layer                      | VM(s)                     | Primary role                                       | Key controls in this setup                                                                                                              | Telemetry you get                                | Fast checks (you already have a script)                                            |
-| -------------------------- | ------------------------- | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------------------- |
-| **Physical (USB)**         | dom0 policy + `sys-usb`   | Contain/mediate USB keyboards, mice, storage       | dom0 **device policies** route all USB to `sys-usb`; **tag-gated** block-attach; `usbguard` **default-deny** w/ allowlist               | `/var/log/usbguard/audit.log` in `sys-usb`       | Input requires `ask`; only tagged VMs can receive block devices; `usbguard` active |
-| **Link (L2/L3 hygiene)**   | `sys-net`                 | NIC access & kernel guards                         | NetworkManager **MAC randomization**; sysctl: `rp_filter=1`, **no redirects**, syncookies                                               | `journalctl` for NM; `/proc/sys` values          | MAC randomization config present; sysctl file applied                              |
-| **Routing/egress policy**  | `sys-firewall`            | Per-VM firewall; DNS hop with attribution          | Qubes **default-drop** per-VM rules; `dnsmasq` with **log-queries** (optionally ECS/MAC)                                                | `/var/log/dnsmasq.log`                           | dnsmasq installed & logging; default drop visible in `qvm-firewall`                |
-| **Name resolution**        | `sys-dns`                 | Validating recursive resolver (no opaque upstream) | **Unbound** with DNSSEC, qname-minimisation, root.hints; **query & reply logging**; optional **DNSTAP**                                 | `/var/log/unbound/unbound.log` (+ DNSTAP socket) | `unbound-checkconf` clean; logs non-empty                                          |
-| **Inspection / detection** | `sys-ids`                 | Inline visibility; protocol anomalies, C2 patterns | **Suricata** AF_PACKET; **EVE DNS/flow** outputs                                                                                        | `/var/log/suricata/eve.json`                     | Suricata active; eve.json growing on traffic                                       |
-| **Transport & time**       | Templates (Debian+Fedora) | TLS/SSH policy; authenticated time                 | Debian: OpenSSL **SECLEVEL≥2/3**, GnuTLS overrides; Fedora: **crypto-policies** (DEFAULT/FUTURE); **Chrony + NTS**; hardened SSH client | System logs; `update-crypto-policies --show`     | TLS min version enforced; Chrony/chronyd active with `nts`                         |
-| **Application**            | App VMs                   | Sandbox + least-privilege network                  | **firejail + AppArmor** (Debian) / firejail (Fedora), **per-VM default-drop** allowlist (https,dns,ntp…)                                | App logs + upstream dnsmasq/Unbound              | `qvm-firewall` shows default drop; only allowed ports open                         |
-
----
-
-# Common vulnerabilities & how this model mitigates them
-
-> The quick summaries below pair the usual failure modes with the specific countermeasures you’ve put in place (or optional knobs you can turn on).
-
-## 1) Physical / USB
-
-**Threats**
-
-- BadUSB / HID injection (fake keyboard/mouse), rubber-ducky style payloads
-- Auto-mount of malicious storage; firmware backdoors on USB hubs
-
-**Mitigations**
-
-- **dom0 device policies**: `qubes.Input*` require **ask** and only from `sys-usb`; storage attaches **only** to VMs with the right **tag** (`usb_storage_ok`)
-- **usbguard** in `sys-usb` with **default-deny** and explicit allowlist, plus **audit log**
-- (Optional) Treat storage as **read-only** ingestion VM and copy files through qrexec to scanning VM
-
-**Residual risk / tips**
-
-- Human approval fatigue → keep “ask” meaningful; restrict tags to a tiny set
-- Consider a **disposable ingest qube** for unknown drives; mount `nodev,nosuid,noexec`
-
----
-
-## 2) Link / sys-net
-
-**Threats**
-
-- Layer-2 tracking via static MAC addresses
-- Redirect/ARP spoofing local shenanigans; SYN floods
-
-**Mitigations**
-
-- **Randomized MAC** for Wi-Fi/Ethernet; sysctl: **no redirects**, **rp_filter=1**, **syncookies=1**
-- (Optional) Disable unused protocols (e.g., IPv6) if your environment doesn’t need them
-
-**Residual risk / tips**
-
-- Public Wi-Fi still hostile → prefer VPN from an **app VM** or a dedicated **sys-vpn** between firewall and ids
-
----
-
-## 3) Routing & egress policy / sys-firewall
-
-**Threats**
-
-- Silent egress to unexpected destinations (exfil), DNS tunneling
-- DNS attribution loss (you don’t know which VM asked)
-
-**Mitigations**
-
-- **Per-VM default-drop** allowlists by service (e.g., only 443/53/123)
-- **dnsmasq logging** provides **per-VM** view of DNS queries; optional **ECS/MAC** tagging for even stronger attribution
-
-**Residual risk / tips**
-
-- Application layer can still tunnel over allowed ports (e.g., 443). That’s what **Suricata** is for downstream.
-
----
-
-## 4) DNS / sys-dns
-
-**Threats**
-
-- DNS spoofing/poisoning; privacy leakage to third-party upstreams; opaque DoH upstreams
-
-**Mitigations**
-
-- **Recursive** Unbound with **DNSSEC** and **qname-minimisation** (no opaque resolver trust)
-- **Query & reply** logging + optional **DNSTAP** for forensics
-- (Optional) **DoT** to a trusted upstream if you prefer privacy over transparency; or keep recursion to root for full validation
-
-**Residual risk / tips**
-
-- Pure recursion exposes patterns to the root/TLD ecosystem (not a “third-party” but still observable). Choose recursion vs DoT based on your **privacy vs transparency** preference.
-
----
-
-## 5) IDS / sys-ids
-
-**Threats**
-
-- C2 callbacks over DNS/HTTPS; data exfil; protocol anomalies
-
-**Mitigations**
-
-- **Suricata** inline with **EVE** logs (`dns`, `flow`, `anomaly`) to detect tunneling and known indicators
-- (Optional) Curate rule sets, add **ET Open / ET Pro** signatures; forward EVE to a **sys-log** sink
-
-**Residual risk / tips**
-
-- Encrypted traffic hides payloads; rely on **flow-based** and **DNS** indicators + policy (restrict destinations where possible)
-
----
-
-## 6) Transport crypto / templates
-
-**Threats**
-
-- Weak TLS ciphers; downgraded protocol versions; clock skew breaking TLS/OCSP
-
-**Mitigations**
-
-- Debian: system OpenSSL **SECLEVEL** and GnuTLS overrides; Fedora: **crypto-policies**
-- SSH client hardened (no password auth; modern KEX/Ciphers/MACs)
-- **Chrony + NTS** for authenticated time
-
-**Residual risk / tips**
-
-- **Strict** policies can break legacy apps; use **per-template overrides** sparingly if needed
-
----
-
-## 7) Application layer
-
-**Threats**
-
-- Browser or tool RCE, lateral movement, noisy background traffic
-
-**Mitigations**
-
-- **firejail + AppArmor** (Debian)/firejail (Fedora) sandboxing; network **default-drop** with minimal allows
-- Split roles across **separate app VMs**; use **disposables** for high-risk browsing
-
-**Residual risk / tips**
-
-- Keep templates updated; restrict file exchange paths; consider **Split-GPG / Split-SSH** for keys
-
-## DisposableVMs Helper (Qubes OS)
-
-**Why disposables?**  
-Disposable VMs (DispVMs) are short-lived sandboxes that launch from a clean template and are destroyed when closed. They’re perfect for opening untrusted links/files, viewing docs securely, and keeping state out of your main AppVMs.
-
-### What this role does
-
-- Creates one or more **named Disposable Templates** (e.g., `debian-12-dvm`, `fedora-40-dvm`) by setting `template_for_dispvms=True`.
-- Sets the **system default** DispVM (`qubes-prefs default_dispvm`).
-- Optionally sets **per-VM default** DispVMs (`qvm-prefs <vm> default_dispvm`).
-- Installs **qrexec policy** so tagged VMs open URLs/files **in a DispVM** automatically:
-  - `qubes.OpenURL` → `@dispvm:<name>`
-  - `qubes.OpenInVM` → `@dispvm:<name>`
-
-### Configure (pillar)
-
-Edit `/srv/pillar/roles/dispvm.sls`:
+Pillar top:
 
 ```yaml
-disposables:
-  default_dispvm: debian-12-dvm
-  create:
-    debian-12-dvm:
-      { template: debian-12-minimal, label: gray, netvm: sys-firewall }
-    fedora-40-dvm:
-      { template: fedora-40-minimal, label: gray, netvm: sys-firewall }
-  per_vm_default:
-    work-web: debian-12-dvm
-    dev: fedora-40-dvm
-  force_policies:
-    openurl_tags: [mail, chat, work]
-    openinvm_tags: [untrusted, work]
-  fallback:
-    openurl: ask
-    openinvm: ask
+base:
+  dom0:
+    - roles.net_topology
+    - roles.hardening
+    - roles.secrets
+    - roles.opsec
+    - roles.integrity_alerts
 ```
 
-## Usage examples (dom0):
-
-# simple run
-
-sudo ~/osi-security-healthcheck.sh
-
-# assert specific disposables + defaults and actually spawn them
-
-sudo ~/osi-security-healthcheck.sh --dvm "debian-12-dvm fedora-40-dvm" \
- --default-dispvm "debian-12-dvm" \
- --per-vm-default "work-web:debian-12-dvm dev:fedora-40-dvm" \
- --spawn-test
-
 ---
 
-# Cross-cutting improvements (optional but recommended)
+## Network Topologies & Wiring
 
-- **Central log sink** (`sys-log`): ship Unbound, dnsmasq, Suricata, usbguard logs via syslog/qrexec; rotate in service VMs, retain in log qube
-- **Policy assertions**: nftables rule in `sys-firewall` to **drop all DNS not destined to `sys-dns`** (prevents bypass)
-- **VPN egress**: insert `sys-vpn` between `sys-ids` and `sys-net`; enforce via policy & health check
-- **Update cadence**: schedule template and service-VM updates; quarterly crypto policy review
-- **Backups & recovery**: document how to rebuild `sys-dns`/`sys-ids` quickly (template packages + state apply)
+**Pillar**: `/srv/pillar/roles/net_topology.sls`
 
----
+- Templates (as used): Fedora **42 minimal** for net VMs; Whonix‑GW for Tor
+- Chains are ordered **from AppVM side → … → sys‑net**
 
-# What “good” looks like (signals/KPIs)
+```yaml
+net_topology:
+  templates:
+    net: fedora-42-minimal
+    whonix_gw: whonix-gateway-17
 
-- `dnsmasq.log` in `sys-firewall` shows **only** expected app VMs and domains
-- `unbound.log` shows **validated** answers; **SERVFAIL** correlates with DNSSEC failures (good!)
-- `eve.json` regularly contains **dns** and **flow** records; anomalies are alerting to you (even if just via grep + cron)
-- Healthcheck script: **0 critical failures**, warnings only for truly optional items
+  vms:
+    sys-net: { template: fedora-42-minimal, label: red, provides_network: true }
+    sys-firewall:
+      { template: fedora-42-minimal, label: orange, provides_network: true }
+    sys-dns:
+      { template: fedora-42-minimal, label: yellow, provides_network: true }
+    sys-vpn:
+      { template: fedora-42-minimal, label: black, provides_network: true }
+    sys-whonix:
+      { template: whonix-gateway-17, label: black, provides_network: true }
 
----
+  chains:
+    basic: { order: [sys-firewall, sys-dns] }
+    vpn_after_dns: { order: [sys-firewall, sys-dns, sys-vpn] }
+    vpn_then_tor: { order: [sys-vpn, sys-whonix] }
 
-# Tiny runbook (1-minute)
-
-- Suspect DNS exfil? → `tail -f /var/log/dnsmasq.log` (sys-firewall) and `jq '.dns' /var/log/suricata/eve.json` (sys-ids)
-- Unexpected domain? → confirm in `sys-dns:/var/log/unbound/unbound.log` (query+reply), then block per-VM in `qvm-firewall`
-- USB incident? → `sys-usb:/var/log/usbguard/audit.log`; **remove rule** or **block device**; re-attach via disposable ingest
-
+  active: basic
 ```
 
-```
+**Wiring** (state: `roles/topology`):
 
-## Quick tests
+- Applies `netvm` pointers hop‑by‑hop ending at `sys-net`
+- Tags hops with `topology_<active>`
+- Points AppVMs to the **first hop**
 
-In a work-tagged AppVM:
+### Switching the active chain
 
-# Password lookup should route to vault-pass automatically
-
-qpass github.com/you/repo
-
-Split-GPG sign (work/dev/prod tag):
-
-echo "test" | qgpg --clearsign | cat
-
-Split-SSH agent availability (work/dev tag):
-
-# Should prompt/allow via policy to vault-ssh
-
-SSH_AUTH_SOCK=${SSH_AUTH_SOCK:-} ssh -T git@github.com || true
-
-Try from a VM without an allowed tag → expect ask/deny as per your fallback.
+1. Edit `net_topology:active` (e.g., `vpn_after_dns`)
+2. `sudo qubesctl --all state.apply osi_model_security`
 
 ---
 
-sudo qubesctl --all state.apply osi_model_security
+## Net Guard (nftables kill‑switches & leak prevention)
 
-# Set initial baselines (first run only)
+**State**: `roles/net_guard`
 
-sudo systemctl start template-hash-verify.service || true
-sudo systemctl start policy-verify.service || true
-sudo systemctl start dom0-boot-verify.service || true
-{% if I.tpm.enable %}sudo systemctl start tpm-attest-verify.service || true{% endif %}
+- **sys-firewall**: drop forwarded `:53/tcp,udp`, `:853/tcp (DoT)`, and `:443/udp (QUIC)`
+- **sys-dns**: only DNS (and optional NTP) may egress; optional **resolver allowlist** and DoT toggle
+- **sys-vpn**: hard **kill‑switch** — permit tunnel interfaces (`wg0`/`tun0`) and specific VPN endpoints on `eth0`; drop all else
+- **IPv6**: optional global disable in NetVMs to avoid v6 leaks
 
-# Run the all-in-one verifier:
+Configure via pillar knobs under `net_topology.guard` or the `hardening` role (below).
 
+---
+
+## 100× Hardening (systemic)
+
+**Pillar**: `/srv/pillar/roles/hardening.sls`
+
+- Vault air‑gapping (`netvm: none`)
+- Common **sysctl** across service VMs (kptr/dmesg restrictions, rp_filter, no redirects, `fs.suid_dumpable=0`, optional IPv6 disable)
+- **sys-net**: block LLMNR/mDNS/NetBIOS; strict forward policy
+- **sys-firewall**: enforce no direct DNS / DoT / QUIC
+- **sys-dns**: Unbound hardening + DNS‑only egress
+- **sys-vpn**: strict kill‑switch (endpoints from pillar)
+- **sys-ids**: logrotate & optional drop‑on‑anomaly wiring
+- **AppVMs**: `qvm-firewall … set default drop` (allow rules come from your app pillar)
+- OPSEC basics (volatile journals, no coredumps, minimal shell history) per service VM
+- dom0: mask sleep/hibernate
+
+Apply with the orchestrator; knobs are in the pillar file.
+
+---
+
+## Device Hardening (USB, Input, Microphone)
+
+**State**: `roles/devices/strict-devices.sls`
+
+- Creates/ensures **`sys-audio`** (networkless) and sets as `default_audiovm`
+- Removes audio output from infra qubes (sys‑net, sys‑firewall, sys‑dns, sys‑vpn, sys‑ids, sys‑whonix)
+- **Policy** `/etc/qubes/policy.d/30-device-hardening.policy`:
+
+  - `qubes.USBAttach`: **ask**; restrict transport to `sys-usb`
+  - `qubes.InputKeyboard/Mouse`: **ask** and only from `sys-usb → dom0`
+  - `qubes.AudioInputEnable`: **ask** routed via `sys-audio`; disable is always allowed
+
+- Verifier: `/usr/local/sbin/verify_device_hardening`
+
+**Run**:
+
+```bash
+sudo /usr/local/sbin/verify_device_hardening
+```
+
+**Optional**: tag‑based allowlists (`@tag:usb-ok`) — uncomment sample rules in the policy file.
+
+---
+
+## Secrets: split‑GPG, split‑SSH, qubes‑pass (Multi‑vault)
+
+**Pillar**: `/srv/pillar/roles/secrets.sls`
+
+- Map vault VMs: `{ gpg: vault-gpg, ssh: vault-ssh, pass: vault-pass }`
+- Tag‑based access control per service; **fallback** `ask|deny`
+- Optional client helpers (`qpass`, `qgpg`, `qssh-add`) and `QUBES_*` env
+
+**Advanced** (`roles/secrets_advanced`):
+
+- **Per‑operation Split‑GPG services**: `gpg.Sign`, `gpg.Decrypt`, `gpg.Encrypt`, `gpg.Verify`
+- **Maintenance tag** (default: `gpg_admin_30m`) with **auto‑expiry** tool:
+
+  - CLI: `/usr/local/sbin/qubes-secrets-maint add <vm> [minutes]` | `del <vm>`
+
+- **qrexec audit logging** → `/var/log/qubes/audit-secrets.log`
+
+**Healthcheck**:
+
+```bash
+sudo /usr/local/sbin/osi-secrets-opsec-check.sh
+```
+
+---
+
+## OPSEC OS Extras
+
+**Pillar**: `/srv/pillar/roles/opsec.sls`
+
+- Debian template list: `deb_harden`, `deb_harden_min`, `deb_work`, `deb_hack`
+- journald **Storage=volatile**, no coredumps, **no shell history**
+- UTC timezone + neutral locale
+- Randomized hostname per boot (systemd unit) for AppVMs from those templates
+- sys‑net Wi‑Fi hygiene (no autoconnect, MAC rand scanning), Bluetooth disabled
+- dom0 sleep/hibernate masked
+
+---
+
+## Integrity & Alerts Stack
+
+**State**: `roles/integrity_alerts`
+
+- **`sys-alert`** (networkless) with service `my.alert.Send`; sender allowlist from pillar
+- **Signed‑only Salt**: `/usr/local/sbin/signed-highstate` → verify sig → stage → backup → deploy → baseline update → highstate
+- **Baselines + daily verify**:
+
+  - `/srv/salt` tree hash → vault
+  - Templates full‑FS hash → vault
+  - `/etc/qubes/policy.d` pack hash → vault
+  - dom0 `/boot` + `/usr/lib/xen` hash → vault
+  - **TPM** PCR(0,2,5,7) JSON baseline (if enabled) → vault
+
+- **Conservative Xen mitigations** (configurable cmdline)
+
+**Verifiers**:
+
+```bash
 sudo /usr/local/sbin/verify_security_integrity
+# or component scripts:
+sudo /usr/local/sbin/salt-tree-verify.sh
+sudo /usr/local/sbin/qubes-template-hash-verify.sh
+sudo /usr/local/sbin/qubes-policy-verify.sh
+sudo /usr/local/sbin/dom0-boot-verify.sh
+sudo /usr/local/sbin/qubes-tpm-pcr-verify.sh
+```
 
-## Notes
+**Timers** (daily by default):
 
-sys-alert is networkless and receives alerts only from the VMs you list in allow_senders; everyone else is denied with notify=yes.
+- `template-hash-verify.timer`, `policy-verify.timer`, `salt-tree-verify.timer`, `dom0-boot-verify.timer`, `tpm-attest-verify.timer`
 
-Signed-only deployment: signed-highstate enforces sig-check → stage → atomic rsync → baseline update → state.highstate.
+---
 
-Hashes use stable tar ordering (--sort=name --mtime=@0 --numeric-owner) to prevent false diffs.
+## All‑in‑one Healthcheck
 
-TPM is optional; if enabled, we baseline PCRs {{TP.pcrs|join(', ')}} for bank {{TP.bank}} and alert on drift.
+**State**: `roles/healthcheck_all`
 
-Xen mitigations line is configurable; a reboot is required for it to take effect.
+- **CLI**: `/usr/local/sbin/osi-all-healthcheck`
 
-## in dom0
+  - Topology wiring and hop verification
+  - nftables guard presence (sys‑firewall/sys‑dns/sys‑vpn/sys‑net)
+  - Device policies (via `verify_device_hardening`)
+  - Secrets/OPSEC (`osi-secrets-opsec-check.sh`)
+  - Integrity (`verify_security_integrity`)
 
+- **Timer**: `osi-all-healthcheck.timer` (defaults hourly; configurable in pillar `integrity_alerts.timers.all_in_one`)
+- On failure, short alert is sent to **`sys-alert`** and full logs are saved in `/var/log/osi/health/`
+
+---
+
+## VPN & DNS: Customization
+
+- **VPN endpoints** (WireGuard/OpenVPN) are configured via pillar (`hardening.vpn.endpoints` or `net_topology.guard.vpn.endpoints`). Example:
+
+```yaml
+hardening:
+  vpn:
+    killswitch: true
+    type: wireguard
+    endpoints:
+      - { ip: 203.0.113.10, port: 51820, proto: udp }
+      - { ip: 198.51.100.20, port: 51820, proto: udp }
+```
+
+- **DNS resolver allowlist** (tight egress from `sys-dns`):
+
+```yaml
+hardening:
+  dns:
+    only_dns_out: true
+    dot_upstream: false
+    resolver_allowlist: ["9.9.9.9", "149.112.112.112"]
+```
+
+---
+
+## Operational Runbook
+
+- **Switch topology**: edit pillar → apply → verify via `osi-all-healthcheck`
+- **Grant temporary GPG admin**: `sudo qubes-secrets-maint add <vm> 30m`; import/export keys via `qgpg-import` / `qgpg-export`; tag auto‑removes
+- **Rotate integrity baselines** (after intentional changes):
+
+  - Salt: `signed-highstate` (auto updates salt baseline)
+  - Policy pack: run `policy-baseline` state or re‑emit hash to vault
+  - Templates/dom0 boot: re‑baseline scripts exist; or re‑initialize by re‑running `*-baseline` portions as needed
+
+- **Respond to alerts**: open `sys-alert` → inspect `/var/log/sys-alert.log` and dom0 `/var/log/qubes/audit-secrets.log`
+
+---
+
+## Logs & Files Cheat Sheet
+
+- Alerts sink: **`sys-alert:/var/log/sys-alert.log`**
+- qrexec audit mirror: **`/var/log/qubes/audit-secrets.log`** (dom0)
+- All‑in‑one reports: **`/var/log/osi/health/`** (dom0)
+- Integrity baselines in vault: **`/home/user/.template-hashes/*.sha256`**, **`/home/user/.policy-hashes/qubes-policy.sha256`**, **`/var/lib/qubes/salt-hashes/*`** (as configured)
+- Device policy: **`/etc/qubes/policy.d/30-device-hardening.policy`**
+
+---
+
+## Security Model & Assumptions
+
+- Policies are **default‑deny or ask** for sensitive device actions
+- DNS goes through **sys-dns only**; apps cannot DoH/DoT/QUIC‑bypass
+- VPN kill‑switch prevents raw uplink leaks if the tunnel drops
+- Vaults are **air‑gapped** (no NetVM)
+- Integrity checks are **out‑of‑band stored** in a vault and verified daily
+- `sys-alert` is **networkless**, receives qrexec alerts only from allowlisted VMs
+
+> **Reboots required** when changing **Xen cmdline mitigations**.
+
+---
+
+## Tags Used
+
+- `topology_<name>` — applied to each hop VM of the active chain
+- `layer_app` — (optional) tag your AppVMs for healthcheck discovery
+- `usb-ok` — (optional) tag for allowing USBAttach on selected VMs
+- `gpg_admin_30m` — temporary tag granting GPG admin RPCs (auto‑expires)
+
+---
+
+## Troubleshooting
+
+- **No DNS from AppVMs**: confirm `sys-firewall` blocks forwarded `:53`, and `sys-dns` is reachable; check `nft list ruleset` in both
+- **Traffic leaks when VPN down**: verify `sys-vpn` nftables table exists and endpoints match pillar; run `osi-all-healthcheck`
+- **Policy hash mismatch** after edits: re‑baseline policy via `policy-baseline` (or re‑run the baseline step in `roles/integrity_alerts`)
+- **TPM verify empty**: ensure `tpm2-tools` installed and PCR baseline exists in vault
+
+---
+
+## Maintenance & Backups
+
+- The signed deploy script creates **compressed backups** of `/srv/salt` under `{{backups_dir}}` before each update
+- Keep a secure, offline copy of your **public key** used to sign Salt bundles and of your **vault‑secrets** AppVM
+
+---
+
+## Appendix A — Notable Commands
+
+```bash
+# Apply all roles
 sudo qubesctl --all state.apply osi_model_security
 
-# sanity checks
+# Healthchecks
+sudo /usr/local/sbin/osi-all-healthcheck
+sudo /usr/local/sbin/verify_security_integrity
+sudo /usr/local/sbin/verify_device_hardening
+sudo /usr/local/sbin/osi-secrets-opsec-check.sh
 
-qubes-prefs clockvm
-cat /etc/qubes/policy.d/25-comms.policy | sed -n '1,120p'
-/usr/local/sbin/verify_boot_firmware
-sudo panic # (safe to run; it only shuts down VMs matching your patterns)
-Notes / optional next steps
-If you later want monthly key rotation, we’ll add a disabled-by-default timer that:
+# Signed highstate
+sudo /usr/local/sbin/signed-highstate
 
-generates fresh SSH subkeys in vault-ssh,
+# Maintenance tag (temporary GPG admin)
+sudo /usr/local/sbin/qubes-secrets-maint add <vm> 30m
+sudo /usr/local/sbin/qubes-secrets-maint del <vm>
+```
 
-generates GPG subkeys (sign/encrypt/auth) in vault-gpg,
+---
 
-updates authorized_keys/agent configs via qrexec and prompts you through sys-alert,
+## Appendix B — Qrexec Services (custom)
 
-archives old keys in the vault with a signed, dated manifest.
-(This is invasive; we’ll keep it opt-in via pillar when you’re ready.)
+- `my.alert.Send` — dom0/sys‑\* → `sys-alert` notification sink
+- `gpg.Sign`, `gpg.Decrypt`, `gpg.Encrypt`, `gpg.Verify` — per‑operation Split‑GPG
+- `gpg.AdminImport`, `gpg.AdminExport` — guarded by maintenance tag
 
-The comms policy already defaults to deny everywhere and asks on allowed tag pairs; if you want per-VM exceptions, add tags (qvm-tags <vm> -a work) and you’re done.
+(Plus standard Qubes services: `qubes.Gpg`, `qubes.SshAgent`, `qubes.PassLookup`, `qubes.USBAttach`, `qubes.USB`, `qubes.USBDetach`, `qubes.InputKeyboard`, `qubes.InputMouse`, `qubes.AudioInputEnable`, `qubes.AudioInputDisable`.)
 
-The side-channel role ships disabled—flip sidechannel.enable: true after you choose core mapping appropriate for your CPU topology.
+---
 
-If you want me to merge the new checks into your all-in-one healthcheck (validate clockvm, grep for key lines in 25-comms.policy, and run verify_boot_firmware), say the word and I’ll extend that script too.
+## License & Disclaimer
+
+These states are provided **as‑is**. They make significant changes to networking and policies in a high‑assurance configuration. Review every file in **dom0** before applying and keep offline backups of your Pillars, policies, and vaults. Use at your own risk.

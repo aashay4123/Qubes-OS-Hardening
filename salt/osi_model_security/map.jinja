@@ -1,9 +1,9 @@
 {# Shared config & sane defaults, pulled from pillar #}
 {% set cfg = {
-  'strict_crypto': pillar.get('osi_model_security:strict_crypto', True),
+  'strict_crypto':      pillar.get('osi_model_security:strict_crypto', True),
   'enable_dnsmasq_logs': pillar.get('osi_model_security:enable_dnsmasq_logs', True),
-  'enable_ecs': pillar.get('osi_model_security:enable_ecs', False),
-  'enable_dnstap': pillar.get('osi_model_security:enable_dnstap', False),
+  'enable_ecs':         pillar.get('osi_model_security:enable_ecs', False),
+  'enable_dnstap':      pillar.get('osi_model_security:enable_dnstap', False),
 
   'usb_policy': {
     'storage_allowed_tags': pillar.get('usb_policy:storage_allowed_tags', ['usb_storage_ok']),
@@ -11,16 +11,19 @@
 
   'dns_tuning': {
     'stats_interval': pillar.get('dns:stats_interval', 60),
-    'rotate_weeks': pillar.get('dns:rotate_weeks', 8),
+    'rotate_weeks':   pillar.get('dns:rotate_weeks', 8),
   },
 
   'transport': {
-    'chrony_nts_server': pillar.get('transport:chrony_nts_server', 'time.cloudflare.com'),
-    'debian_openssl_seclevel': pillar.get('transport:debian_openssl_seclevel', 2),
+    'chrony_nts_server':        pillar.get('transport:chrony_nts_server', 'time.cloudflare.com'),
+    'debian_openssl_seclevel':  pillar.get('transport:debian_openssl_seclevel', 2),
   },
 
-  'vms': pillar.get('osi_model_security:vms', {}),
-  'app_vms': pillar.get('osi_model_security:app_vms', {})
+  # Your VM inventories
+  'vms':      pillar.get('osi_model_security:vms', {}),
+  'app_vms':  pillar.get('osi_model_security:app_vms', {}),   # <-- fixed comma here ✅
+
+  # Disposables (global defaults + per-VM mappings)
   'disposables': pillar.get('disposables', {
     'default_dispvm': None,
     'create': {},
@@ -28,19 +31,80 @@
     'force_policies': {'openurl_tags': [], 'openinvm_tags': []},
     'fallback': {'openurl': 'ask', 'openinvm': 'ask'}
   }),
+
+  # Optional feature buckets already used by other roles/states
   'undercover_dom0': pillar.get('undercover_dom0', {}),
-  'secrets': pillar.get('secrets', {}),
-  'opsec':   pillar.get('opsec', {}),
-  'hardening': pillar.get('hardening', {}),
-  'integrity_alerts': pillar.get('integrity_alerts', {}),
-  'clock_comms': pillar.get('clock_comms', {}),
-  'sidechannel': pillar.get('sidechannel', {}),
-  'emergency':   pillar.get('emergency',   {}),
-  'boot_firmware': pillar.get('boot_firmware', {}),
+  'secrets':         pillar.get('secrets', {}),
+  'opsec':           pillar.get('opsec', {}),
+  'hardening':       pillar.get('hardening', {}),
+  'integrity_alerts':pillar.get('integrity_alerts', {}),
+  'clock_comms':     pillar.get('clock_comms', {}),
+  'sidechannel':     pillar.get('sidechannel', {}),
+  'emergency':       pillar.get('emergency', {}),
+  'boot_firmware':   pillar.get('boot_firmware', {}),
 
+  # === NEW: healthcheck_user_merge role config (defaults if Pillar not provided) ===
+  'healthcheck_user_merge': pillar.get('healthcheck_user_merge', {
+    'expect_templates': {
+      'sys-net':      'fedora-42-minimal',
+      'sys-firewall': 'fedora-42-minimal',
+      'sys-dns':      'fedora-42-minimal',
+      'app_default':  'deb_harden',
+    },
+    'resolver': 'unbound',                      # or 'dnscrypt'
+    'vpn_vms':  ['sys-vpn-ru','sys-vpn-nl'],
+    'vpn_tor_gateway': 'sys-vpn-tor',
+    'whonix_ws': ['ws-tor-research','ws-tor-forums'],
+    'app_vms':   ['work','dev','personal'],
+
+    'global_default_dispvm': 'debian-12-dvm',
+    'per_vm_default_dispvm': {'work':'debian-12-dvm','dev':'debian-12-dvm'},
+
+    'suite_timer': 'disable',  # 'disable' | 'hourly' | 'daily'
+
+    # Deep checks: ON by default (flip to false in Pillar to mute)
+    'checks': {
+      'dnsmasq':                True,   # sys-firewall dnsmasq presence/logging
+      'whonix_dns_exclusion':   True,   # NAT exclusion for Whonix VPN→Tor DNS
+      'appvm_firewall_drop':    True,   # AppVM default-drop in qvm-firewall
+      'ids_suricata':           True,   # sys-ids Suricata & eve.json
+      'resolver_logs':          True,   # unbound/dnscrypt logs present
+      'device_policies':        True,   # USB/Input/PCI policy sanity
+      'whonix_policy_file':     True,   # 50-whonix-vpn-tor.policy presence
+      'openssl_tls_policy':     True,   # OpenSSL/Fedora crypto policy check
+      'chrony_nts':             True,   # Chrony/chronyd + NTS hint
+      'ssh_client_hardening':   True,   # /etc/ssh/ssh_config.d/*
+      'apparmor_browsers':      True,   # Firefox/Chromium enforce
+      'vault_servers':          True,   # split-GPG/SSH services in vault
+      'client_wrappers':        True,   # qgpg*/qpass* wrappers in clients
+      'tags_split_services':    True,   # split-* tags on callers
+      'updatevm_sys_firewall':  True,   # dom0 updatevm suggestion
+      'dvm_spawn_test':         True,   # actually spawn DVMs
+    }
+  }),
+
+  # === Optional: extras role you enabled earlier (safe defaults) ===
+  'app_leak_guard_extras': pillar.get('app_leak_guard_extras', {
+    'debian_templates': ['deb_harden','deb_harden_min','deb_work','deb_dev'],
+    'fedora_templates': ['fedora-42-minimal','fedora-42-vpn'],
+    'flags': {
+      'disable_screen_portals': True,
+      'remove_remote_desktop':  True,
+      'remove_flatpak_snap':    True,
+      'remove_gnome_oa':        True,
+      'null_recent_files':      True,
+      'tmpfs_user_cache':       True,
+      'disable_clipboard_history': True,
+      'ssh_no_forward_agent':   True,
+      'git_use_config_only':    True,
+      'thunderbird_lockdown':   True,
+      'libreoffice_lockdown':   True,
+    }
+  }),
 } %}
+{# ---------------- End cfg block ---------------- #}
 
-{# Gather all template names used anywhere for transport hardening #}
+{# Gather all template names used anywhere for transport hardening, etc. #}
 {% set templates = [] %}
 {% for _, spec in cfg.vms.items() %}
   {% if spec.get('template') %}{% do templates.append(spec.get('template')) %}{% endif %}
@@ -48,4 +112,23 @@
 {% for _, spec in cfg.app_vms.items() %}
   {% if spec.get('template') %}{% do templates.append(spec.get('template')) %}{% endif %}
 {% endfor %}
+
+{# include templates referenced by disposables.create (if any) #}
+{% for name, ds in cfg.disposables.get('create', {}).items() %}
+  {% if ds.get('template') %}{% do templates.append(ds.get('template')) %}{% endif %}
+{% endfor %}
+
+{# Optional: include known role-specific templates if present in pillar #}
+{% for t in cfg.app_leak_guard_extras.get('debian_templates', []) %}
+  {% do templates.append(t) %}
+{% endfor %}
+{% for t in cfg.app_leak_guard_extras.get('fedora_templates', []) %}
+  {% do templates.append(t) %}
+{% endfor %}
+
 {% set templates = templates|unique %}
+
+{# Export helpers many states import #}
+{% set all_templates = templates %}
+{% set service_vms = cfg.vms.keys()|list %}
+{% set app_vm_names = cfg.app_vms.keys()|list %}

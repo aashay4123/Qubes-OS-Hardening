@@ -66,6 +66,7 @@ include:
   - osi_model_security.roles.emergency
   - osi_model_security.roles.boot_fw
   - osi_model_security.roles.healthcheck_all
+  - roles.healthcheck_user_merge
 
 # 2) NetVM chain (app → sys-firewall → sys-dns → sys-ids → sys-net) from pillar
 {% if cfg.vms.get('sys-firewall') and cfg.vms.get('sys-firewall').get('netvm') %}

@@ -12,3 +12,4 @@ base:
     - roles.hardening
     - roles.integrity_alerts
     - roles.clock_comms
+    - roles.healthcheck_user_merge
