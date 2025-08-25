@@ -1,79 +1,79 @@
-{# ===== Remote dom0 GUI over reverse-SSH (Option A + Audio) ===== #}
-{# Pure cmd.run/file.managed; no pillar. Edit the CONFIG block. #}
+{# =========================
+   Remote GUI over sys-gui-vnc (Qubes 4.2)
+   End-to-end, single file, with audio + reverse SSH to macOS.
+   ========================= #}
 
-{# ---------- CONFIG (EDIT THESE) ---------- #}
-{% set ADMIN = "user" %}                       {# dom0 desktop user #}
-{% set PROXY = "sys-remote" %}                 {# proxy qube name #}
-{% set PROXY_TPL = "fedora-42-xfce" %}         {# template for proxy #}
-{% set PROXY_LABEL = "yellow" %}
-{% set SSH_VAULT = "vault-ssh" %}              {# offline key holder #}
+{# ---------- CONFIG (edit or override via pillar: remote_gui_vnc:*) ---------- #}
+{% set R = pillar.get('remote_gui', {}) %}
+{% set PROXY = R.get('proxy_qube','sys-remote') %}
+{% set PROXY_TPL = R.get('proxy_template','fedora-42-xfce') %}
+{% set PROXY_LABEL = R.get('proxy_label','yellow') %}
+{% set SSH_VAULT = R.get('ssh_vault','vault-ssh') %}            {# for Split-SSH (optional) #}
+{% set AUTHSOCK = R.get('ssh_auth_sock','/run/user/1000/ssh-agent') %}
 
-{% set MACU  = "darlene" %}              {# macOS login user #}
-{% set MACH  = "192.167.1.70" %}         {# mac hostname/IP #}
-{% set MACP  = 22 %}                           {# mac ssh port #}
-{% set AUTHSOCK = "/run/user/1000/ssh-agent" %}{# split-ssh agent sock in proxy (or leave) #}
+{# macOS target for reverse SSH (you will connect to vnc://127.0.0.1:5901) #}
+{% set MACU  = R.get('mac_user','darlene') %}
+{% set MACH  = R.get('mac_host','192.168.1.70') %}
+{% set MACP  = R.get('mac_ssh_port',22) %}
 
-{% set INSTALL_PW_UTILS = True %}
-{% set AUDIO_ENABLE = True %}
-{% set BITK = 96 %}        {# Opus kbps #}
-{% set SR   = 48000 %}     {# sample rate #}
-{% set CH   = 2 %}         {# channels #}
-{% set VNC_HASH = "" %}    {# optional: printf 'PASS' | vncpasswd -f ; put string here #}
-{# ---------------------------------------- #}
+{# Audio (captured in sys-gui-vnc, encoded in proxy, played on Mac with ffplay) #}
+{% set AUDIO = R.get('audio', {'enable': True, 'bitrate_k': 96, 'sample_rate': 48000, 'channels': 2}) %}
+{% set BITK = AUDIO.get('bitrate_k',96) %}
+{% set SR   = AUDIO.get('sample_rate',48000) %}
+{% set CH   = AUDIO.get('channels',2) %}
+{% set INSTALL_PW_UTILS = R.get('install_pipewire_utils', True) %}
 
-create-ssh-vault:
+{# ---------- 0) Ensure the Fedora XFCE template exists (used by sys-gui-vnc & proxy) ---------- #}
+maybe-install-fedora-xfce:
   cmd.run:
     - name: |
         set -e
-        if ! qvm-ls --raw-list | grep -qx {{ SSH_VAULT }}; then
-          qvm-create --class AppVM --template debian-12-minimal --label red {{ SSH_VAULT }}
+        if ! qvm-ls --raw-list | grep -Eq '^fedora-.*-xfce$'; then
+          qubes-dom0-update -y qubes-template-{{ PROXY_TPL.split('-xfce')[0] }} || true
         fi
-        qvm-prefs {{ SSH_VAULT }} netvm none
 
-vault-ssh-install-client:
+{# ---------- 1) Create/ensure sys-gui-vnc via official formula, enable service ---------- #}
+ensure-sys-gui-vnc:
   cmd.run:
     - name: |
         set -e
-        qvm-run -u root --pass-io {{ SSH_VAULT }} 'bash -lc "
-          if command -v apt-get >/dev/null 2>&1; then
-            apt-get update -y || true
-            apt-get -y install openssh-client || true
-          elif command -v dnf >/dev/null 2>&1; then
-            dnf -y install openssh-clients || true
-          fi
-          install -d -m 700 /home/user/.ssh && chown -R user:user /home/user/.ssh
-        "'
+        if ! qvm-ls --raw-list | grep -qx sys-gui-vnc; then
+          qubesctl top.enable qvm.sys-gui-vnc || true
+          qubesctl top.enable qvm.sys-gui-vnc pillar=True || true
+          qubesctl --all state.highstate
+        fi
+        # Some builds require explicit service enable:
+        qvm-service --enable sys-gui-vnc guivm-vnc || true
+        qvm-start --skip-if-running sys-gui-vnc || true
     - require:
-      - cmd: create-ssh-vault
+      - cmd: maybe-install-fedora-xfce
 
-/usr/local/sbin/remote-gui-print-pubkey:
-  file.managed:
-    - mode: '0755'
-    - contents: |
-        #!/bin/bash
-        set -euo pipefail
-        VAULT="{{ SSH_VAULT }}"
-        for p in "/home/user/.ssh/id_ed25519_mac.pub" "/home/user/.ssh/id_ed25519.pub"; do
-          if qvm-run --pass-io -u user "$VAULT" "test -r $p && cat $p" >/dev/null 2>&1; then
-            qvm-run --pass-io -u user "$VAULT" "cat $p" \
-            | sed 's/^/restrict,permitlisten=\"127.0.0.1:5901\" /'
-          fi
-        done
-        echo "Paste ONE line above into your Mac: ~/.ssh/authorized_keys (chmod 600)."
-
-/usr/share/doc/remote-gui-MAC-SETUP.txt:
+{# ---------- 2) qrexec policies: ConnectTCP to VNC, audio capture, Split-SSH ---------- #}
+/etc/qubes/policy.d/30-remote-vnc.policy:
   file.managed:
     - mode: '0644'
     - contents: |
-        macOS one-time:
-          1) Settings → General → Sharing → Remote Login: ON
-          2) brew install ffmpeg
-          3) Put ONE public key line from:
-               sudo /usr/local/sbin/remote-gui-print-pubkey
-             into ~/.ssh/authorized_keys (chmod 600)
-          4) After the state, verify listener:  lsof -iTCP:5901 -sTCP:LISTEN
-             Connect:  open vnc://127.0.0.1:5901
+        # Only {{ PROXY }} may reach sys-gui-vnc:5900
+        qubes.ConnectTCP +5900  {{ PROXY }}    sys-gui-vnc   allow
+        qubes.ConnectTCP +5900  *              sys-gui-vnc   deny  notify=yes
 
+/etc/qubes/policy.d/31-remote-audio.policy:
+  file.managed:
+    - mode: '0644'
+    - contents: |
+        # Only {{ PROXY }} may call audio capture in sys-gui-vnc
+        my.audio.Capture        {{ PROXY }}    sys-gui-vnc   allow
+        my.audio.Capture        *              sys-gui-vnc   deny  notify=yes
+
+/etc/qubes/policy.d/32-remote-ssh-agent.policy:
+  file.managed:
+    - mode: '0644'
+    - contents: |
+        # Allow Split-SSH (proxy → vault-ssh) if you use it
+        qubes.SshAgent          {{ PROXY }}    {{ SSH_VAULT }}   allow
+        qubes.SshAgent          +allow-all-names   +allow-all-names   deny  notify=yes
+
+{# ---------- 3) Proxy qube: create, lock egress to Mac:22, install tools ---------- #}
 create-proxy-qube:
   cmd.run:
     - name: |
@@ -83,234 +83,184 @@ create-proxy-qube:
           qvm-prefs {{ PROXY }} netvm sys-firewall
         fi
 
-install-qubes-remote-desktop:
-  cmd.run:
-    - name: qubes-dom0-update -y qubes-remote-desktop
-    - unless: rpm -q qubes-remote-desktop >/dev/null 2>&1
-
-{% if INSTALL_PW_UTILS %}
-install-pipewire-utils:
-  cmd.run:
-    - name: qubes-dom0-update -y pipewire-utils || true
-    - unless: command -v pw-record >/dev/null 2>&1
-{% endif %}
-
-/etc/systemd/system/qubes-vncserver@.service.d/override.conf:
-  file.managed:
-    - makedirs: True
-    - mode: '0644'
-    - contents: |
-        [Service]
-        Environment=QUBES_VNC_ARGS=-localhost -rfbport 5901
-  require:
-    - cmd: install-qubes-remote-desktop
-
-enable-vnc-service:
-  cmd.run:
-    - name: |
-        set -e
-        systemctl daemon-reload
-        systemctl enable --now "qubes-vncserver@{{ ADMIN }}"
-  require:
-    - file: /etc/systemd/system/qubes-vncserver@.service.d/override.conf
-
-{% if VNC_HASH %}
-vnc-pass-dir:
-  file.directory:
-    - name: /home/{{ ADMIN }}/.vnc
-    - user: {{ ADMIN }}
-    - group: {{ ADMIN }}
-    - mode: '0700'
-vnc-pass-file:
-  file.managed:
-    - name: /home/{{ ADMIN }}/.vnc/passwd
-    - user: {{ ADMIN }}
-    - group: {{ ADMIN }}
-    - mode: '0600'
-    - contents: |
-        {{ VNC_HASH }}
-  require:
-    - file: vnc-pass-dir
-restart-vnc-after-pass:
-  cmd.run:
-    - name: systemctl restart "qubes-vncserver@{{ ADMIN }}"
-  require:
-    - file: vnc-pass-file
-{% endif %}
-
-/etc/qubes/policy.d/30-remote-admin.policy:
-  file.managed:
-    - mode: '0644'
-    - contents: |
-        qubes.ConnectTCP +5901   {{ PROXY }}   dom0   allow
-        qubes.ConnectTCP +5901   *             dom0   deny  notify=yes
-        my.audio.Capture         {{ PROXY }}   dom0   allow
-        my.audio.Capture         *             dom0   deny  notify=yes
-
-/etc/qubes/policy.d/31-ssh-agent-remote-admin.policy:
-  file.managed:
-    - mode: '0644'
-    - contents: |
-        qubes.SshAgent   {{ PROXY }}   {{ SSH_VAULT }}   allow
-        qubes.SshAgent   +allow-all-names   +allow-all-names   deny  notify=yes
-
-tag-proxy-remote-admin:
-  cmd.run:
-    - name: qvm-tags {{ PROXY }} add remote-admin || true
-
-/usr/local/sbin/dom0-audio-capture.sh:
-  file.managed:
-    - mode: '0755'
-    - contents: |
-        #!/bin/bash
-        set -euo pipefail
-        SR={{ SR }}; CH={{ CH }}
-        if command -v pw-record >/dev/null 2>&1; then
-          SINK="$(pactl get-default-sink 2>/dev/null | awk '{print $NF}')"
-          MON="${SINK:+${SINK}.monitor}"
-          exec pw-record ${MON:+--target "$MON"} --rate "$SR" --channels "$CH" --format S16_LE - 2>/dev/null
-        fi
-        SINK="$(pactl get-default-sink 2>/dev/null | awk '{print $NF}')"
-        MON="${SINK}.monitor"
-        exec parec ${SINK:+-d "$MON"} --format=s16le --rate="$SR" --channels="$CH"
-
-/etc/qubes-rpc/my.audio.Capture:
-  file.managed:
-    - mode: '0755'
-    - contents: |
-        #!/bin/sh
-        exec runuser -l {{ ADMIN }} -c "/usr/local/sbin/dom0-audio-capture.sh"
-
-proxy-install-pkgs:
-  cmd.run:
-    - name: |
-        set -e
-        qvm-run -u root --pass-io {{ PROXY }} 'bash -lc "
-          if command -v dnf >/dev/null 2>&1; then
-            dnf -y install autossh ffmpeg openssh-clients qubes-app-linux-split-ssh || true
-          elif command -v apt-get >/dev/null 2>&1; then
-            apt-get update -y || true
-            apt-get -y install autossh ffmpeg openssh-client qubes-app-linux-split-ssh || true
-          fi
-        "'
-  require:
-    - cmd: create-proxy-qube
-
-proxy-bind-dom0-vnc:
-  cmd.run:
-    - name: |
-        set -e
-        qvm-run -u root --pass-io {{ PROXY }} 'bash -lc "
-          install -d -m 700 /home/user/.config/systemd/user
-          cat >/home/user/.config/systemd/user/qct-vnc.service <<EOF
-          [Unit]
-          Description=Bind local 15901 to dom0:5901 via qubes.ConnectTCP
-          After=qubes-qrexec-agent.service
-          [Service]
-          Type=simple
-          ExecStart=/usr/bin/qvm-connect-tcp 15901:dom0:5901
-          Restart=always
-          RestartSec=2
-          [Install]
-          WantedBy=default.target
-          EOF
-          chown -R user:user /home/user/.config/systemd/user
-          sudo -u user systemctl --user daemon-reload
-          sudo -u user systemctl --user enable --now qct-vnc.service
-        "'
-  require:
-    - cmd: proxy-install-pkgs
-
-proxy-firewall-allow-mac:
+proxy-firewall-to-mac-only:
   cmd.run:
     - name: |
         set -e
         qvm-firewall {{ PROXY }} reset || true
         qvm-firewall {{ PROXY }} add action=accept proto=tcp dsthost={{ MACH }} dstports={{ MACP }}
         qvm-firewall {{ PROXY }} set default=drop
-  require:
-    - cmd: create-proxy-qube
+    - require:
+      - cmd: create-proxy-qube
+
+proxy-packages:
+  cmd.run:
+    - name: |
+        set -e
+        # install autossh/ffmpeg + split-ssh client inside proxy
+        if qvm-run -q {{ PROXY }} 'command -v dnf >/dev/null'; then
+          qvm-run -q -u root {{ PROXY }} 'dnf -y install autossh ffmpeg openssh-clients qubes-app-linux-split-ssh || true'
+        else
+          qvm-run -q -u root {{ PROXY }} 'apt-get update -y || true; apt-get -y install autossh ffmpeg openssh-client qubes-app-linux-split-ssh || true'
+        fi
+        qvm-run -q -u root {{ PROXY }} 'install -d -m 700 /home/user/.config/systemd/user; chown -R user:user /home/user/.config/systemd/user'
+    - require:
+      - cmd: create-proxy-qube
+
+{# ---------- 4) Bind 15900 → sys-gui-vnc:5900 inside proxy (qvm-connect-tcp) ---------- #}
+proxy-bind-vnc:
+  cmd.run:
+    - name: |
+        set -e
+        qvm-run -q -u root {{ PROXY }} "bash -lc 'cat > /home/user/.config/systemd/user/qct-vnc.service <<\"EOF\"
+        [Unit]
+        Description=Bind local 15900 to sys-gui-vnc:5900 via qubes.ConnectTCP
+        After=qubes-qrexec-agent.service
+        [Service]
+        Type=simple
+        ExecStart=/usr/bin/qvm-connect-tcp 15900:sys-gui-vnc:5900
+        Restart=always
+        RestartSec=2
+        [Install]
+        WantedBy=default.target
+        EOF
+        chown user:user /home/user/.config/systemd/user/qct-vnc.service
+        sudo -u user systemctl --user daemon-reload
+        sudo -u user systemctl --user enable --now qct-vnc.service
+        '"
+    - require:
+      - cmd: proxy-packages
+      - cmd: ensure-sys-gui-vnc
 
 proxy-known-hosts-mac:
   cmd.run:
     - name: |
         set -e
-        qvm-run -u user --pass-io {{ PROXY }} 'bash -lc "
-          mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          ssh-keyscan -p {{ MACP }} {{ MACH }} >> ~/.ssh/known_hosts 2>/dev/null || true
-          chmod 600 ~/.ssh/known_hosts || true
-        "'
-  require:
-    - cmd: create-proxy-qube
+        qvm-run -q {{ PROXY }} "bash -lc 'mkdir -p ~/.ssh && chmod 700 ~/.ssh; ssh-keyscan -p {{ MACP }} {{ MACH }} >> ~/.ssh/known_hosts 2>/dev/null || true; chmod 600 ~/.ssh/known_hosts || true'"
+    - require:
+      - cmd: proxy-packages
 
-proxy-reverse-vnc-ssh:
+{# ---------- 5) Reverse SSH from proxy → Mac (Mac gets localhost:5901) ---------- #}
+proxy-reverse-ssh-vnc:
   cmd.run:
     - name: |
         set -e
-        qvm-run -u user --pass-io {{ PROXY }} 'bash -lc "
-          mkdir -p ~/.config/systemd/user
-          cat >~/.config/systemd/user/remote-vnc-reverse-ssh.service <<EOF
-          [Unit]
-          Description=Reverse SSH: expose Proxy:15901 on Mac:5901
-          After=network-online.target
-          [Service]
-          Environment=AUTOSSH_GATETIME=0
-          {% if AUTHSOCK %}Environment=SSH_AUTH_SOCK={{ AUTHSOCK }}{% endif %}
-          ExecStart=/usr/bin/autossh -N -o ServerAliveInterval=10 -o ServerAliveCountMax=3 \
-                   -p {{ MACP }} -R 5901:localhost:15901 {{ MACU }}@{{ MACH }}
-          Restart=always
-          RestartSec=3
-          [Install]
-          WantedBy=default.target
-          EOF
-          systemctl --user daemon-reload
-          systemctl --user enable --now remote-vnc-reverse-ssh.service
-        "'
-  require:
-    - cmd: proxy-install-pkgs
-    - cmd: proxy-bind-dom0-vnc
-    - cmd: proxy-known-hosts-mac
-    - cmd: proxy-firewall-allow-mac
+        qvm-run -q {{ PROXY }} "bash -lc 'cat > ~/.config/systemd/user/remote-vnc-reverse-ssh.service <<\"EOF\"
+        [Unit]
+        Description=Reverse SSH: expose Proxy:15900 on Mac:5901
+        After=network-online.target
+        [Service]
+        Environment=AUTOSSH_GATETIME=0
+        {% if AUTHSOCK %}Environment=SSH_AUTH_SOCK={{ AUTHSOCK }}{% endif %}
+        ExecStart=/usr/bin/autossh -N -o ServerAliveInterval=10 -o ServerAliveCountMax=3 \
+                 -p {{ MACP }} -R 5901:localhost:15900 {{ MACU }}@{{ MACH }}
+        Restart=always
+        RestartSec=3
+        [Install]
+        WantedBy=default.target
+        EOF
+        systemctl --user daemon-reload
+        systemctl --user enable --now remote-vnc-reverse-ssh.service
+        '"
+    - require:
+      - cmd: proxy-bind-vnc
+      - cmd: proxy-known-hosts-mac
+      - cmd: proxy-firewall-to-mac-only
 
-{% if AUDIO_ENABLE %}
+{# ---------- 6) sys-gui-vnc: install audio tools (optional), add RPC, capture script ---------- #}
+sys-gui-vnc-audio-pkgs:
+  cmd.run:
+    - name: |
+        set -e
+        if {{ 'true' if INSTALL_PW_UTILS else 'false' }}; then
+          NV="$(qvm-prefs -g sys-gui-vnc netvm || true)"
+          if [ -z "$NV" ] || [ "$NV" = "none" ]; then qvm-prefs sys-gui-vnc netvm sys-firewall || true; ATTACH=1; else ATTACH=0; fi
+          if qvm-run -q sys-gui-vnc 'command -v dnf >/dev/null'; then
+            qvm-run -q -u root sys-gui-vnc 'dnf -y install pipewire-utils pulseaudio-utils ffmpeg || true'
+          else
+            qvm-run -q -u root sys-gui-vnc 'apt-get update -y || true; apt-get -y install pipewire-utils pulseaudio-utils ffmpeg || true'
+          fi
+          [ "${ATTACH:-0}" = "1" ] && qvm-prefs sys-gui-vnc netvm none || true
+        fi
+    - require:
+      - cmd: ensure-sys-gui-vnc
+
+sys-gui-vnc-audio-rpc:
+  cmd.run:
+    - name: |
+        set -e
+        qvm-run -q -u root sys-gui-vnc "bash -lc 'install -d -m 755 /usr/local/sbin /etc/qubes-rpc'"
+        qvm-run -q -u root sys-gui-vnc "bash -lc 'cat > /usr/local/sbin/gui-audio-capture.sh <<\"EOF\"
+        #!/bin/bash
+        set -euo pipefail
+        SR={{ SR }}; CH={{ CH }}
+        if command -v pw-record >/dev/null 2>&1; then
+          SINK=\$(pactl get-default-sink 2>/dev/null | awk \x27{print \$NF}\x27)
+          MON=\"\${SINK:+\${SINK}.monitor}\"
+          exec pw-record \${MON:+--target \"\$MON\"} --rate \"\$SR\" --channels \"\$CH\" --format S16_LE - 2>/dev/null
+        fi
+        SINK=\$(pactl get-default-sink 2>/dev/null | awk \x27{print \$NF}\x27)
+        MON=\"\${SINK}.monitor\"
+        exec parec \${SINK:+-d \"\$MON\"} --format=s16le --rate=\"\$SR\" --channels=\"\$CH\"
+        EOF
+        chmod 0755 /usr/local/sbin/gui-audio-capture.sh
+        '"
+        qvm-run -q -u root sys-gui-vnc "bash -lc 'cat > /etc/qubes-rpc/my.audio.Capture <<\"EOF\"
+        #!/bin/sh
+        exec /usr/local/sbin/gui-audio-capture.sh
+        EOF
+        chmod 0755 /etc/qubes-rpc/my.audio.Capture
+        '"
+    - require:
+      - cmd: sys-gui-vnc-audio-pkgs
+
+{# ---------- 7) Proxy: audio pull → Opus → SSH → ffplay on Mac ---------- #}
+{% if AUDIO.get('enable', True) %}
 proxy-audio-pipeline:
   cmd.run:
     - name: |
         set -e
-        qvm-run -u user --pass-io {{ PROXY }} 'bash -lc "
-          mkdir -p ~/.config/systemd/user
-          cat >~/.config/systemd/user/remote-audio.service <<EOF
-          [Unit]
-          Description=Dom0 audio → qrexec → ffmpeg (Opus) → SSH → Mac ffplay
-          After=qubes-qrexec-agent.service
-          [Service]
-          {% if AUTHSOCK %}Environment=SSH_AUTH_SOCK={{ AUTHSOCK }}{% endif %}
-          ExecStart=/bin/bash -lc '\''qrexec-client-vm dom0 my.audio.Capture \
-            | ffmpeg -hide_banner -loglevel warning -f s16le -ac {{ CH }} -ar {{ SR }} -i - \
-                -c:a libopus -b:a {{ BITK }}k -application lowdelay -frame_duration 20 -f ogg - \
-            | ssh -p {{ MACP }} {{ MACU }}@{{ MACH }} "ffplay -hide_banner -loglevel error -nodisp -autoexit -i -"'\''
-          Restart=always
-          RestartSec=2
-          [Install]
-          WantedBy=default.target
-          EOF
-          systemctl --user daemon-reload
-          systemctl --user enable --now remote-audio.service
-        "'
-  require:
-    - cmd: proxy-install-pkgs
+        qvm-run -q {{ PROXY }} "bash -lc 'cat > ~/.config/systemd/user/remote-audio.service <<\"EOF\"
+        [Unit]
+        Description=sys-gui-vnc audio → qrexec → ffmpeg (Opus) → SSH → Mac ffplay
+        After=qubes-qrexec-agent.service
+        [Service]
+        {% if AUTHSOCK %}Environment=SSH_AUTH_SOCK={{ AUTHSOCK }}{% endif %}
+        ExecStart=/bin/bash -lc \x27
+          set -euo pipefail;
+          qrexec-client-vm sys-gui-vnc my.audio.Capture \
+          | ffmpeg -hide_banner -loglevel warning \
+              -f s16le -ac {{ CH }} -ar {{ SR }} -i - \
+              -c:a libopus -b:a {{ BITK }}k -application lowdelay -frame_duration 20 \
+              -f ogg - \
+          | ssh -p {{ MACP }} {{ MACU }}@{{ MACH }} "ffplay -hide_banner -loglevel error -nodisp -autoexit -i -" \
+        \x27
+        Restart=always
+        RestartSec=2
+        [Install]
+        WantedBy=default.target
+        EOF
+        systemctl --user daemon-reload
+        systemctl --user enable --now remote-audio.service
+        '"
+    - require:
+      - cmd: proxy-packages
+      - cmd: sys-gui-vnc-audio-rpc
 {% endif %}
 
-/usr/local/sbin/remote-admin-status:
+{# ---------- 8) Helper: dom0 status ---------- #}
+remote-gui-status:
   file.managed:
+    - name: /usr/local/sbin/remote-gui-status
     - mode: '0755'
     - contents: |
         #!/bin/bash
-        echo "=== Remote Admin (Option A) ==="
-        systemctl status "qubes-vncserver@{{ ADMIN }}" --no-pager || true
+        echo "== sys-gui-vnc =="
+        qvm-ls | grep -E 'sys-gui-vnc' || true
+        qvm-run sys-gui-vnc 'ss -lnt | grep 5900 || netstat -lnt | grep 5900' 2>/dev/null || true
         echo
-        echo "[dom0] Allowed ConnectTCP 5901 callers:"
-        grep -E 'qubes\.ConnectTCP \+5901' /etc/qubes/policy.d/30-remote-admin.policy || true
+        echo "== Policies (ConnectTCP 5900, audio) =="
+        grep -E 'ConnectTCP \+5900|my\.audio\.Capture' /etc/qubes/policy.d/*.policy 2>/dev/null || true
         echo
-        echo "[proxy] user services:"
-        qvm-run {{ PROXY }} 'systemctl --user --no-pager --full status qct-vnc.service remote-vnc-reverse-ssh.service remote-audio.service' || true
+        echo "== Proxy services =="
+        qvm-run {{ PROXY }} 'systemctl --user --no-pager --full status qct-vnc.service remote-vnc-reverse-ssh.service {% if AUDIO.get("enable", True) %}remote-audio.service{% endif %}' 2>/dev/null || true
