@@ -86,10 +86,12 @@ create-proxy-qube:
 proxy-firewall-to-mac-only:
   cmd.run:
     - name: |
-        set -e
+       set -e
         qvm-firewall {{ PROXY }} reset || true
+        # allow only SSH to your Mac
         qvm-firewall {{ PROXY }} add action=accept proto=tcp dsthost={{ MACH }} dstports={{ MACP }}
-        qvm-firewall {{ PROXY }} set default=drop
+        # make everything else drop
+        qvm-firewall {{ PROXY }} add action=drop
     - require:
       - cmd: create-proxy-qube
 

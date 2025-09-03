@@ -1,4 +1,0 @@
-add core health assertion
-template and dom0 integrity check 
-system leak check
-ALL Network Topology check
